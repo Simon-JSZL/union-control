@@ -12,7 +12,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-@ControllerAdvice(assignableTypes = {AgentController.class, LlmController.class})
+@ControllerAdvice(assignableTypes = {AgentController.class, CommonController.class, LlmController.class})
 public class ApiExceptionHandler {
     private static final Logger LOG = LoggerFactory.getLogger(ApiExceptionHandler.class);
 
@@ -32,10 +32,9 @@ public class ApiExceptionHandler {
     }
 
     @ExceptionHandler(ControlService.ActiveExecutionException.class)
-    public ResponseEntity<Map<String, Object>> activeExecution(ControlService.ActiveExecutionException error) {
-        Map<String, Object> body = body("agent_run_active", "已有任务正在执行");
-        body.put("activeExecution", error.activeExecution);
-        return new ResponseEntity<>(body, HttpStatus.CONFLICT);
+    public ResponseEntity<Map<String, Object>> activeExecution(
+            ControlService.ActiveExecutionException ignored) {
+        return error(HttpStatus.CONFLICT, "agent_run_active", "已有任务正在执行");
     }
 
     @ExceptionHandler(ControlService.StaleExecutionException.class)
@@ -45,7 +44,7 @@ public class ApiExceptionHandler {
 
     @ExceptionHandler(ControlService.DataCorruptionException.class)
     public ResponseEntity<Map<String, Object>> dataCorruption() {
-        LOG.error("Stored SDK item JSON is invalid");
+        LOG.error("Stored AG-UI message payload is invalid");
         return error(HttpStatus.INTERNAL_SERVER_ERROR, null, "会话数据损坏");
     }
 

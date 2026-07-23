@@ -4,7 +4,10 @@ server:
 
 agent:
   py-app-base-url: ${PY_APP_BASE_URL:http://127.0.0.1:8083}
-  sync-token: ${AGENT_SYNC_TOKEN:}
+  behavior-risk-token: ${BEHAVIOR_RISK_TOKEN:}
+  execution-max-age-seconds: ${AGENT_MAX_RUN_SECONDS:900}
+  cancel-request-max-age-seconds: ${AGENT_CANCEL_GRACE_SECONDS:30}
+  execution-cleanup-interval-ms: ${AGENT_CLEANUP_INTERVAL_MS:30000}
 
 spring:
   datasource:

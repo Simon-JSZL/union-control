@@ -1,80 +1,86 @@
 # Project Overview
 
-`union-control` is the single browser entrypoint and the internal persistence
-service used by `union-py-app`. `LlmController` exposes fixed `/llm/**` routes:
-database-only requests end in control/MySQL, while Agent runs stream or proxy to
-py-app. `AgentController` exposes fixed `/agent/**` routes only for py-app
-Session, execution, and memory calls. Both controllers delegate business work
-and SQL to `ControlService`; `LlmController` delegates Python forwarding to
-`AgentProxyService`. Controllers never call each other.
+## Purpose
 
-## Stack and entrypoint
+`union-control` is the browser-facing control plane for the PydanticAI service.
+It owns authenticated conversation/run state, standard AG-UI message
+persistence, the official Memory store protocol adapter, and transparent AG-UI
+SSE proxying.
 
-- Java 8, Spring Boot 1.5.22, Spring Framework 4.3.25
-- Spring JDBC and MySQL Connector/J 8.0.33 against MySQL 8.4
-- `com.union.control.UnionControlApplication`
+## Runtime
 
-Conversation endpoints require `USERID`, as do `/agent/memoryList`,
-`/agent/memorySave`, and `/agent/memoryDelete`. Memory ownership is
-derived only from that authenticated cookie; v1 always uses personal
-`scope=user`, and `memoryKey` is unique for that user regardless of the
-informational `domain` tag.
+- Java 8
+- Spring Boot 1.5
+- MySQL 8
+- Browser APIs remain under `/llm/**`
+- Internal py-app APIs remain under `/agent/**` and validate the CAS session
+  obtained by control
 
-## Agent execution coordination
+Only GET and POST endpoints are used in production.
 
-`ai_conversation` is also the execution control plane; no Redis or separate
-execution table is used. `execution_status` is `idle`, `running`, or
-`cancel_requested`. A generated `active_execution_user_id` column and unique
-index enforce at most one active conversation per user across all workers.
-Conversation history displays and edits `title`; no conversation summary is
-stored or generated.
+## Protocol
 
-`run_error` items share the conversation message table so browser history can
-restore failed turns in order. `/llm/conversationDetails` includes them, while
-the SDK-facing `/agent/getConversationItems` and `/agent/popConversationItem`
-exclude them so errors are never replayed into Agent context.
+- `POST /llm/chatMessage` accepts the standard AG-UI `RunAgentInput`, claims
+  the user’s single active run, and transparently proxies AG-UI SSE.
+- `GET /llm/conversationDetails` returns conversation metadata and a
+  `messages` array of standard AG-UI messages.
+- `POST /llm/executionCancel` requires `conversationId` and `runId`, records
+  the cancellation request, and sends an owner-scoped cancel request to py-app.
+- `POST /llm/chatMessageSync` keeps the product `{content}` response.
 
-The fixed Cookie-authenticated internal endpoints are `/agent/executionClaim`,
-`/agent/executionHeartbeat`, and `/agent/executionFinish`. Claim checks
-before creating a conversation and returns HTTP 409 with
-`errorCode=agent_run_active` on conflict. Heartbeat and finish compare the
-opaque execution token, so a stale worker cannot clear a newer execution.
-After the user requests cancellation, a missing worker heartbeat for 30 seconds
-releases the record, covering a crashed owning worker.
+There is no execution-current/recovery endpoint, legacy event translation,
+SDK item API, heartbeat event, or dual-write path.
 
-`schema.sql` creates these fields only for a fresh table; `CREATE TABLE IF NOT
-EXISTS` does not alter an existing table. Existing databases must run
-`deploy/sql/20260720_add_agent_execution.sql` once or start one new
-union-control instance to execute the idempotent startup migration. Verify the
-five execution columns plus `uk_active_execution_user` and
-`idx_user_execution_status` before deploying union-py-app. The Python runtime
-uses the same opaque value for `trace_id` and `execution_token`.
+## Persistence
 
-To roll it back, first stop Agent traffic and set all executions to `idle`;
-then drop `uk_active_execution_user` followed by
-`idx_user_execution_status`, `active_execution_user_id`,
-`execution_heartbeat_at`, `execution_started_at`, `execution_token`, and
-`execution_status`.
+`ai_conversation` owns only conversation metadata and status.
 
-## Public and internal routes
+`ai_agent_execution` owns Coordinator root executions and their subagent
+children. A generated-column unique key enforces one active root execution per
+user while allowing multiple children under that root.
 
-- Web calls `/llm/conversationList`, `/llm/conversationDetails`,
-  `/llm/conversationTitle`, `/llm/conversationRestore`,
-  `/llm/conversationExpire`, `/llm/executionCurrent`, and
-  `/llm/executionCancel`; these never enter py-app.
-- `/llm/chatMessage` and `/llm/chatMessageSync` forward to py-app at
-  `PY_APP_BASE_URL`; control injects its configured `AGENT_SYNC_TOKEN` for the
-  synchronous route. The backend scheduler calls py-app's behavior-risk route
-  directly.
-- Local control generates `CASSESSIONID=session-1` and `USERID=user-1` for its
-  own routes. `/agent/authCurrent` belongs to the existing authentication
-  controller and is not implemented here.
-- All business routes are fixed; identifiers are query or body parameters.
-- Production transport supports only GET and POST; controllers must not expose
-  PUT, PATCH, or DELETE mappings.
+`ai_conversation_message` stores:
+
+- message ID
+- role and role-specific JSON payload
+- an `agent_execution_id` foreign key
+- a stable per-conversation sequence
+- `delete_flag`
+
+Browser history reconstructs each child execution as a standard AG-UI
+`ActivityMessage`; model history contains root execution messages only.
+
+Browser SSE disconnects cancel the exact claimed root and its children. Root
+and child transitions are one-way and transactional: a committed
+`cancel_requested` state can only become `cancelled`. Startup and scheduled
+cleanup terminate stale `running` and `cancel_requested` trees, while py-app's
+matching hard deadline stops the underlying model and tool work.
+
+`ai_memory_file` and `ai_memory_operation` implement PydanticAI Harness
+`SearchableMemoryStore` semantics: bounded read/list/search, CAS versioning,
+operation-ID idempotency, and operation fingerprint conflicts.
+
+Every logical delete sets `delete_flag=0`; active rows use
+`delete_flag=1`. The former message and personal-memory schemas are not
+migrated or retained because the feature was not released.
+
+## Security
+
+- Browser requests do not supply identity credentials. Control obtains the
+  authenticated CAS session from the authentication service; local development
+  uses the `LocalAuth` mock.
+- Normal Agent, tool, history, completion, cancellation, sync, and Memory calls
+  forward and validate that `CASSESSIONID`.
+- Fixed business scenarios share a generic Authorization-token mechanism.
+  Behavior risk currently uses `BEHAVIOR_RISK_TOKEN`.
+- Conversation completion and cancellation validate user/conversation/run
+  ownership.
+- Memory paths must begin with `<authenticated-user>/personal/`.
+- Agent, Skill, memory namespace, model, provider, and frontend tools are not
+  accepted from browser configuration.
 
 ## Validation
 
 ```bash
-JAVA_HOME=/opt/homebrew/opt/zulu8/Contents/Home PATH=/opt/homebrew/bin:$PATH mvn clean test
+JAVA_HOME=/path/to/java8 mvn clean test
 ```
