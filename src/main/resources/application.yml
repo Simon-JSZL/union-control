@@ -1,0 +1,15 @@
+server:
+  port: ${SERVER_PORT:8080}
+  address: ${SERVER_ADDRESS:127.0.0.1}
+
+agent:
+  py-app-base-url: ${PY_APP_BASE_URL:http://127.0.0.1:8083}
+  sync-token: ${AGENT_SYNC_TOKEN:}
+
+spring:
+  datasource:
+    url: ${MYSQL_URL:jdbc:mysql://127.0.0.1:3306/union_control?createDatabaseIfNotExist=true&allowPublicKeyRetrieval=true&useUnicode=true&characterEncoding=UTF-8&useSSL=false&serverTimezone=Asia/Shanghai}
+    username: ${MYSQL_USER:root}
+    password: ${MYSQL_PASSWORD:mmls@HW902}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    initialize: true
