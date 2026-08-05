@@ -2,9 +2,10 @@ package com.union.control.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.union.control.mapper.ControlMapper;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.dao.EmptyResultDataAccessException;
-import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.event.ContextRefreshedEvent;
 import org.springframework.context.event.EventListener;
@@ -15,8 +16,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.sql.ResultSet;
-import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -35,23 +34,6 @@ public class ControlService {
     private static final List<String> CLIENT_CONFIG_FIELDS = Arrays.asList(
             "agent", "agentName", "skill", "skillId", "memoryNamespace",
             "model", "provider", "userId");
-    private static final String META_SELECT =
-            "SELECT c.conversation_id AS conversationId,c.title,c.status," +
-            "DATE_FORMAT(c.created_at,'%Y-%m-%dT%H:%i:%s') AS createdAt," +
-            "DATE_FORMAT(c.updated_at,'%Y-%m-%dT%H:%i:%s') AS updatedAt," +
-            "(SELECT e.status FROM ai_agent_execution e " +
-            "WHERE e.conversation_id=c.conversation_id AND e.user_id=c.user_id " +
-            "AND e.parent_execution_id IS NULL AND e.delete_flag=1 " +
-            "ORDER BY e.created_at DESC,e.id DESC LIMIT 1) AS executionStatus " +
-            "FROM ai_conversation c";
-    private static final String EXECUTION_SELECT =
-            "SELECT e.id,e.run_id AS runId,e.conversation_id AS conversationId," +
-            "e.parent_execution_id AS parentExecutionId,p.run_id AS parentRunId," +
-            "e.agent_name AS agentName,e.delegation_tool_call_id AS delegationToolCallId," +
-            "e.task,e.status,e.error_code AS errorCode," +
-            "DATE_FORMAT(e.finished_at,'%Y-%m-%dT%H:%i:%s') AS finishedAt," +
-            "DATE_FORMAT(e.created_at,'%Y-%m-%dT%H:%i:%s') AS createdAt " +
-            "FROM ai_agent_execution e LEFT JOIN ai_agent_execution p ON p.id=e.parent_execution_id";
     private static final Set<String> EXECUTION_STATUSES = new HashSet<>(Arrays.asList(
             "running", "cancel_requested", "completed", "failed", "cancelled"));
     private static final Set<String> TERMINAL_STATUSES = new HashSet<>(Arrays.asList(
@@ -59,7 +41,7 @@ public class ControlService {
     private static final Set<String> MESSAGE_ROLES = new HashSet<>(Arrays.asList(
             "user", "assistant", "tool", "system", "developer", "reasoning"));
 
-    private final JdbcTemplate jdbc;
+    private final ControlMapper mapper;
     private final ObjectMapper json;
 
     @Value("${agent.execution-max-age-seconds:900}")
@@ -68,8 +50,9 @@ public class ControlService {
     @Value("${agent.cancel-request-max-age-seconds:30}")
     private int cancelRequestMaxAgeSeconds;
 
-    public ControlService(JdbcTemplate jdbc, ObjectMapper json) {
-        this.jdbc = jdbc;
+    @Autowired
+    public ControlService(ControlMapper mapper, ObjectMapper json) {
+        this.mapper = mapper;
         this.json = json;
     }
 
@@ -77,25 +60,8 @@ public class ControlService {
     @Scheduled(fixedDelayString = "${agent.execution-cleanup-interval-ms:30000}")
     @Transactional
     public void cleanupStaleExecutions() {
-        jdbc.update("UPDATE ai_agent_execution e JOIN ai_agent_execution r " +
-                        "ON e.parent_execution_id=r.id SET e.status='cancelled'," +
-                        "e.error_code=CASE WHEN r.status='cancel_requested' THEN 'cancel_timeout' " +
-                        "ELSE 'execution_timeout' END,e.finished_at=CURRENT_TIMESTAMP," +
-                        "e.updated_at=CURRENT_TIMESTAMP WHERE r.parent_execution_id IS NULL " +
-                        "AND r.delete_flag=1 AND e.delete_flag=1 " +
-                        "AND e.status IN ('running','cancel_requested') AND " +
-                        "((r.status='running' AND r.created_at<DATE_SUB(CURRENT_TIMESTAMP,INTERVAL ? SECOND)) " +
-                        "OR (r.status='cancel_requested' AND r.updated_at<DATE_SUB(CURRENT_TIMESTAMP,INTERVAL ? SECOND)))",
-                executionMaxAgeSeconds, cancelRequestMaxAgeSeconds);
-        jdbc.update("UPDATE ai_agent_execution SET status='cancelled'," +
-                        "error_code=CASE WHEN status='cancel_requested' THEN 'cancel_timeout' " +
-                        "ELSE 'execution_timeout' END,finished_at=CURRENT_TIMESTAMP," +
-                        "updated_at=CURRENT_TIMESTAMP WHERE parent_execution_id IS NULL " +
-                        "AND delete_flag=1 AND ((status='running' " +
-                        "AND created_at<DATE_SUB(CURRENT_TIMESTAMP,INTERVAL ? SECOND)) " +
-                        "OR (status='cancel_requested' " +
-                        "AND updated_at<DATE_SUB(CURRENT_TIMESTAMP,INTERVAL ? SECOND)))",
-                executionMaxAgeSeconds, cancelRequestMaxAgeSeconds);
+        mapper.cleanupStaleExecutionChildren(executionMaxAgeSeconds, cancelRequestMaxAgeSeconds);
+        mapper.cleanupStaleExecutionRoots(executionMaxAgeSeconds, cancelRequestMaxAgeSeconds);
     }
 
     public Map<String, Object> userInfo(String cookieHeader) {
@@ -110,12 +76,7 @@ public class ControlService {
     public Map<String, Object> conversations(String cookieHeader, int limit) {
         Identity identity = identity(cookieHeader);
         requireRange(limit, 1, 100, "limit");
-        String sql = META_SELECT + " WHERE c.user_id=? AND c.delete_flag=1 " +
-                "AND c.status='active' " +
-                "ORDER BY c.created_at DESC,c.id DESC LIMIT ?";
-        List<Map<String, Object>> rows =
-                jdbc.query(sql, (rs, rowNum) -> metadata(rs), identity.userId, limit);
-        return ok(rows);
+        return ok(mapper.findConversations(identity.userId, limit));
     }
 
     public Map<String, Object> conversation(String cookieHeader, String conversationId) {
@@ -146,9 +107,7 @@ public class ControlService {
         String title = text(payload, "title", 255, true);
         requireId(conversationId);
         requireOwned(identity.userId, conversationId, false);
-        jdbc.update("UPDATE ai_conversation SET title=?,updated_at=CURRENT_TIMESTAMP " +
-                        "WHERE conversation_id=? AND user_id=? AND delete_flag=1",
-                title, conversationId, identity.userId);
+        mapper.updateConversationTitle(title, conversationId, identity.userId);
         return ok(loadConversation(identity.userId, conversationId));
     }
 
@@ -158,15 +117,9 @@ public class ControlService {
         String conversationId = text(payload, "conversationId", 64, true);
         requireId(conversationId);
         requireOwned(identity.userId, conversationId, true);
-        jdbc.update("UPDATE ai_conversation_message SET delete_flag=0,updated_at=CURRENT_TIMESTAMP " +
-                        "WHERE conversation_id=? AND user_id=? AND delete_flag=1",
-                conversationId, identity.userId);
-        jdbc.update("UPDATE ai_agent_execution SET delete_flag=0,updated_at=CURRENT_TIMESTAMP " +
-                        "WHERE conversation_id=? AND user_id=? AND delete_flag=1",
-                conversationId, identity.userId);
-        int updated = jdbc.update("UPDATE ai_conversation SET delete_flag=0,updated_at=CURRENT_TIMESTAMP " +
-                        "WHERE conversation_id=? AND user_id=? AND delete_flag=1",
-                conversationId, identity.userId);
+        mapper.softDeleteMessages(conversationId, identity.userId);
+        mapper.softDeleteExecutions(conversationId, identity.userId);
+        int updated = mapper.softDeleteConversation(conversationId, identity.userId);
         if (updated != 1) throw new NotFoundException("会话不存在");
         return ok(null);
     }
@@ -184,18 +137,13 @@ public class ControlService {
         Map<String, Object> active = loadCurrentExecution(identity.userId);
         if (active != null) throw new ActiveExecutionException();
         try {
-            jdbc.update("INSERT INTO ai_conversation " +
-                            "(conversation_id,user_id,title,delete_flag) VALUES (?,?,?,1)",
-                    conversationId, identity.userId, title);
+            mapper.insertConversation(conversationId, identity.userId, title);
         } catch (DuplicateKeyException ignored) {
             // Existing active conversation is expected on subsequent turns.
         }
         requireOwnedActive(identity.userId, conversationId);
         try {
-            jdbc.update("INSERT INTO ai_agent_execution " +
-                            "(run_id,conversation_id,user_id,parent_execution_id,agent_name,status,delete_flag) " +
-                            "VALUES (?,?,?,NULL,'UnionCoordinatorAgent','running',1)",
-                    runId, conversationId, identity.userId);
+            mapper.insertRootExecution(runId, conversationId, identity.userId);
         } catch (DuplicateKeyException error) {
             active = loadCurrentExecution(identity.userId);
             if (active != null) throw new ActiveExecutionException();
@@ -236,14 +184,10 @@ public class ControlService {
         String status = "cancel_requested".equals(root.get("status")) ||
                 "execution_timeout".equals(errorCode)
                 ? "cancelled" : "failed";
-        Object terminalError = status.equals("cancelled")
-                ? (root.get("errorCode") == null ? "cancelled" : root.get("errorCode"))
+        String terminalError = status.equals("cancelled")
+                ? (root.get("errorCode") == null ? "cancelled" : String.valueOf(root.get("errorCode")))
                 : errorCode;
-        jdbc.update("UPDATE ai_agent_execution SET status=?,error_code=?," +
-                        "finished_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP " +
-                        "WHERE parent_execution_id=? AND delete_flag=1 " +
-                        "AND status IN ('running','cancel_requested')",
-                status, terminalError, root.get("id"));
+        mapper.updateChildrenStatus(number(root.get("id")), status, terminalError);
         finishExecution(root, status, errorCode);
     }
 
@@ -263,10 +207,7 @@ public class ControlService {
         if (!"UnionCoordinatorAgent".equals(current) ||
                 !"running".equals(root.get("status")))
             throw new StaleExecutionException();
-        int updated = jdbc.update("UPDATE ai_agent_execution SET agent_name=?," +
-                        "updated_at=CURRENT_TIMESTAMP WHERE id=? AND agent_name=? " +
-                        "AND status='running' AND delete_flag=1",
-                agentName, root.get("id"), current);
+        int updated = mapper.updateRootAgent(number(root.get("id")), agentName, current);
         if (updated != 1) throw new StaleExecutionException();
         return ok(publicExecution(loadExecution(
                 identity.userId, conversationId, runId, false)));
@@ -292,11 +233,8 @@ public class ControlService {
         if (!"running".equals(parentStatus))
             throw new StaleExecutionException();
         try {
-            jdbc.update("INSERT INTO ai_agent_execution " +
-                            "(run_id,conversation_id,user_id,parent_execution_id,agent_name," +
-                            "delegation_tool_call_id,task,status,delete_flag) VALUES (?,?,?,?,?,?,?,'running',1)",
-                    runId, conversationId, identity.userId, parent.get("id"), agentName,
-                    delegationCallId, task);
+            mapper.insertChildExecution(runId, conversationId, identity.userId,
+                    number(parent.get("id")), agentName, delegationCallId, task);
         } catch (DuplicateKeyException error) {
             Map<String, Object> existing = loadExecution(
                     identity.userId, conversationId, runId, false);
@@ -342,13 +280,9 @@ public class ControlService {
                 !same((String) root.get("errorCode"), rootErrorCode)))
             return ok(null);
         if (cancellationWins && !"cancelled".equals(rootStatus)) {
-            Object cancellationError = root.get("errorCode") == null
-                    ? "cancelled" : root.get("errorCode");
-            jdbc.update("UPDATE ai_agent_execution SET status='cancelled',error_code=?," +
-                            "finished_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP " +
-                            "WHERE parent_execution_id=? AND delete_flag=1 " +
-                            "AND status IN ('running','cancel_requested')",
-                    cancellationError, root.get("id"));
+            String cancellationError = root.get("errorCode") == null
+                    ? "cancelled" : String.valueOf(root.get("errorCode"));
+            mapper.updateChildrenStatus(number(root.get("id")), "cancelled", cancellationError);
             finishExecution(root, "cancelled", String.valueOf(cancellationError));
             return ok(null);
         }
@@ -385,11 +319,9 @@ public class ControlService {
                 if (existing == null) {
                     if (replayOnly)
                         throw new IllegalArgumentException("execution 终态重放冲突");
-                    jdbc.update("INSERT INTO ai_agent_execution " +
-                                    "(run_id,conversation_id,user_id,parent_execution_id,agent_name," +
-                                    "delegation_tool_call_id,task,status,delete_flag) VALUES (?,?,?,?,?,?,?,'running',1)",
-                            runId, conversationId, identity.userId, parentId,
-                            value.get("agentName"), value.get("delegationToolCallId"), value.get("task"));
+                    mapper.insertChildExecution(runId, conversationId, identity.userId, parentId,
+                            String.valueOf(value.get("agentName")),
+                            (String) value.get("delegationToolCallId"), (String) value.get("task"));
                     existing = loadExecution(identity.userId, conversationId, runId, true);
                 } else if (!sameExecution(existing, parentRunId,
                         String.valueOf(value.get("agentName")),
@@ -408,10 +340,7 @@ public class ControlService {
         Object rawMessages = payload.get("messages");
         if (!(rawMessages instanceof List) || ((List<?>) rawMessages).size() > 1000)
             throw new IllegalArgumentException("messages 非法");
-        Long current = jdbc.queryForObject(
-                "SELECT COALESCE(MAX(sequence_no),0) FROM ai_conversation_message " +
-                        "WHERE conversation_id=?",
-                Long.class, conversationId);
+        Long current = mapper.currentMessageSequence(conversationId);
         long sequence = current == null ? 0 : current;
         for (Object raw : (List<?>) rawMessages) {
             if (!(raw instanceof Map)) throw new IllegalArgumentException("AG-UI message 必须是对象");
@@ -437,19 +366,13 @@ public class ControlService {
                 continue;
             }
             try {
-                jdbc.update("INSERT INTO ai_conversation_message " +
-                                "(conversation_id,user_id,message_id,agent_execution_id,role,sequence_no,payload,delete_flag) " +
-                                "VALUES (?,?,?,?,?,?,?,1)",
-                        conversationId, identity.userId, messageId, executionId, role,
+                mapper.insertMessage(conversationId, identity.userId, messageId, executionId, role,
                         ++sequence, json.writeValueAsString(messagePayload));
             } catch (DuplicateKeyException ignored) {
                 --sequence;
                 Map<String, Object> existing;
                 try {
-                    existing = jdbc.queryForMap(
-                            "SELECT agent_execution_id AS executionId,role,payload FROM ai_conversation_message " +
-                                    "WHERE conversation_id=? AND message_id=?",
-                            conversationId, messageId);
+                    existing = mapper.findMessage(conversationId, messageId);
                     if (number(existing.get("executionId")) != executionId ||
                             !role.equals(existing.get("role")) ||
                             !json.readTree(String.valueOf(existing.get("payload")))
@@ -475,9 +398,7 @@ public class ControlService {
                 (!rootStatus.equals(requested.get(rootRunId).get("status")) ||
                 !same(rootErrorCode, (String) requested.get(rootRunId).get("errorCode"))))
             throw new IllegalArgumentException("root execution 状态不一致");
-        jdbc.update("UPDATE ai_conversation SET updated_at=CURRENT_TIMESTAMP " +
-                        "WHERE conversation_id=? AND user_id=? AND delete_flag=1",
-                conversationId, identity.userId);
+        mapper.touchConversation(conversationId, identity.userId);
         return ok(null);
     }
 
@@ -485,10 +406,7 @@ public class ControlService {
         Identity identity = identity(cookieHeader);
         String path = memoryPath(identity.userId, payload, "path");
         int maxChars = integer(payload, "maxChars", 1, 65536);
-        List<Map<String, Object>> rows = jdbc.queryForList(
-                "SELECT content,version,last_operation_id AS operationId FROM ai_memory_file " +
-                        "WHERE user_id=? AND path=? AND delete_flag=1",
-                identity.userId, path);
+        List<Map<String, Object>> rows = mapper.readMemory(identity.userId, path);
         Map<String, Object> response = success();
         if (rows.isEmpty()) {
             response.put("file", null);
@@ -509,10 +427,7 @@ public class ControlService {
         Identity identity = identity(cookieHeader);
         String prefix = memoryPrefix(identity.userId, payload);
         int limit = integer(payload, "limit", 1, 1000);
-        List<String> paths = jdbc.query(
-                "SELECT path FROM ai_memory_file WHERE user_id=? AND delete_flag=1 " +
-                        "AND path LIKE ? ORDER BY path LIMIT ?",
-                (rs, rowNum) -> rs.getString("path"), identity.userId, likePrefix(prefix), limit);
+        List<String> paths = mapper.listMemoryPaths(identity.userId, likePrefix(prefix), limit);
         Map<String, Object> response = success();
         response.put("paths", paths);
         return response;
@@ -523,10 +438,7 @@ public class ControlService {
         String operationId = text(payload, "operationId", 128, true);
         String fingerprint = text(payload, "fingerprint", 128, true);
         Map<String, Object> response = success();
-        List<Map<String, Object>> rows = jdbc.queryForList(
-                "SELECT fingerprint,result_version AS resultVersion,existed FROM ai_memory_operation " +
-                        "WHERE user_id=? AND operation_id=?",
-                identity.userId, operationId);
+        List<Map<String, Object>> rows = mapper.findMemoryOperation(identity.userId, operationId, false);
         if (rows.isEmpty()) {
             response.put("mutation", null);
         } else if (!fingerprint.equals(String.valueOf(rows.get(0).get("fingerprint")))) {
@@ -552,18 +464,14 @@ public class ControlService {
         if (!same(currentVersion, expected))
             return memoryError("version_conflict", "memory version 已变化");
         boolean existed = !rows.isEmpty();
-        Long prior = jdbc.queryForObject(
-                "SELECT COALESCE(MAX(version),0) FROM ai_memory_file WHERE user_id=? AND path=?",
-                Long.class, identity.userId, path);
+        Long prior = mapper.currentMemoryVersion(identity.userId, path);
         long version = (prior == null ? 0 : prior) + 1;
         if (existed) {
-            jdbc.update("UPDATE ai_memory_file SET content=?,version=?,last_operation_id=?,updated_at=CURRENT_TIMESTAMP " +
-                            "WHERE id=? AND delete_flag=1",
-                    content, version, operation == null ? null : operation.id, rows.get(0).get("id"));
+            mapper.updateMemoryFile(content, version, operation == null ? null : operation.id,
+                    rows.get(0).get("id"));
         } else {
-            jdbc.update("INSERT INTO ai_memory_file " +
-                            "(user_id,path,content,version,last_operation_id,delete_flag) VALUES (?,?,?,?,?,1)",
-                    identity.userId, path, content, version, operation == null ? null : operation.id);
+            mapper.insertMemoryFile(identity.userId, path, content, version,
+                    operation == null ? null : operation.id);
         }
         saveReceipt(identity.userId, operation, version, existed);
         Map<String, Object> response = success();
@@ -585,8 +493,7 @@ public class ControlService {
             return memoryError("version_conflict", "memory version 已变化");
         boolean existed = !rows.isEmpty();
         if (existed) {
-            jdbc.update("UPDATE ai_memory_file SET delete_flag=0,updated_at=CURRENT_TIMESTAMP " +
-                    "WHERE id=? AND delete_flag=1", rows.get(0).get("id"));
+            mapper.softDeleteMemoryFile(rows.get(0).get("id"));
         }
         saveReceipt(identity.userId, operation, null, existed);
         Map<String, Object> response = success();
@@ -602,9 +509,7 @@ public class ControlService {
         int maxFiles = integer(payload, "maxFiles", 1, 1000);
         int maxChars = integer(payload, "maxChars", 1, 100000);
         int maxFileChars = integer(payload, "maxFileChars", 1, 65536);
-        List<Map<String, Object>> rows = jdbc.queryForList(
-                "SELECT path,content FROM ai_memory_file WHERE user_id=? AND delete_flag=1 " +
-                        "AND path LIKE ? ORDER BY path LIMIT ?",
+        List<Map<String, Object>> rows = mapper.searchMemory(
                 identity.userId, likePrefix(prefix), maxFiles + 1);
         boolean truncated = rows.size() > maxFiles;
         List<Map<String, Object>> matches = new ArrayList<>();
@@ -637,17 +542,12 @@ public class ControlService {
     }
 
     private List<Map<String, Object>> memoryRow(String userId, String path) {
-        return jdbc.queryForList("SELECT id,version FROM ai_memory_file " +
-                        "WHERE user_id=? AND path=? AND delete_flag=1 FOR UPDATE",
-                userId, path);
+        return mapper.findMemoryRow(userId, path);
     }
 
     private Map<String, Object> replay(String userId, Operation operation) {
         if (operation == null) return null;
-        List<Map<String, Object>> rows = jdbc.queryForList(
-                "SELECT fingerprint,result_version AS resultVersion,existed FROM ai_memory_operation " +
-                        "WHERE user_id=? AND operation_id=? FOR UPDATE",
-                userId, operation.id);
+        List<Map<String, Object>> rows = mapper.findMemoryOperation(userId, operation.id, true);
         if (rows.isEmpty()) return null;
         if (!operation.fingerprint.equals(String.valueOf(rows.get(0).get("fingerprint"))))
             return memoryError("operation_conflict", "operation id 已被不同参数使用");
@@ -659,10 +559,8 @@ public class ControlService {
 
     private void saveReceipt(String userId, Operation operation, Long version, boolean existed) {
         if (operation == null) return;
-        jdbc.update("INSERT INTO ai_memory_operation " +
-                        "(user_id,operation_id,fingerprint,result_version,existed,delete_flag) " +
-                        "VALUES (?,?,?,?,?,1)",
-                userId, operation.id, operation.fingerprint, version, existed ? 1 : 0);
+        mapper.insertMemoryOperation(userId, operation.id, operation.fingerprint, version,
+                existed ? 1 : 0);
     }
 
     private Operation operation(Map<String, Object> payload) {
@@ -693,14 +591,7 @@ public class ControlService {
     }
 
     private List<Object> loadRootMessages(String userId, String conversationId) {
-        List<Map<String, Object>> rows = jdbc.queryForList(
-                "SELECT m.message_id AS messageId,m.role,m.payload " +
-                        "FROM ai_conversation_message m " +
-                        "JOIN ai_agent_execution e ON e.id=m.agent_execution_id " +
-                        "WHERE m.conversation_id=? AND m.user_id=? AND m.delete_flag=1 " +
-                        "AND e.delete_flag=1 AND e.parent_execution_id IS NULL " +
-                        "ORDER BY m.sequence_no",
-                conversationId, userId);
+        List<Map<String, Object>> rows = mapper.findRootMessages(userId, conversationId);
         List<Object> messages = new ArrayList<>();
         for (Map<String, Object> row : rows) {
             messages.add(message(row));
@@ -713,14 +604,7 @@ public class ControlService {
         Map<String, Map<String, Object>> byRun = new LinkedHashMap<>();
         for (Map<String, Object> execution : executions)
             byRun.put(String.valueOf(execution.get("runId")), execution);
-        List<Map<String, Object>> rows = jdbc.queryForList(
-                "SELECT m.message_id AS messageId,m.role,m.payload,e.run_id AS runId," +
-                        "e.parent_execution_id AS parentExecutionId " +
-                        "FROM ai_conversation_message m " +
-                        "JOIN ai_agent_execution e ON e.id=m.agent_execution_id " +
-                        "WHERE m.conversation_id=? AND m.user_id=? AND m.delete_flag=1 " +
-                        "AND e.delete_flag=1 ORDER BY m.sequence_no",
-                conversationId, userId);
+        List<Map<String, Object>> rows = mapper.findBrowserMessages(userId, conversationId);
         List<Object> result = new ArrayList<>();
         Map<String, List<Object>> childMessages = new LinkedHashMap<>();
         for (Map<String, Object> row : rows) {
@@ -787,9 +671,7 @@ public class ControlService {
 
     private Map<String, Object> loadConversation(String userId, String conversationId) {
         try {
-            return jdbc.queryForMap(META_SELECT +
-                    " WHERE c.conversation_id=? AND c.user_id=? AND c.delete_flag=1",
-                    conversationId, userId);
+            return mapper.findConversation(userId, conversationId);
         } catch (EmptyResultDataAccessException error) {
             throw new NotFoundException("会话不存在");
         }
@@ -810,19 +692,12 @@ public class ControlService {
     }
 
     private Map<String, Object> loadCurrentRoot(String userId, boolean lock) {
-        List<Map<String, Object>> rows = jdbc.queryForList(
-                EXECUTION_SELECT + " WHERE e.user_id=? AND e.parent_execution_id IS NULL " +
-                        "AND e.status IN ('running','cancel_requested') AND e.delete_flag=1 " +
-                        "LIMIT 1" + (lock ? " FOR UPDATE" : ""),
-                userId);
+        List<Map<String, Object>> rows = mapper.findCurrentRoots(userId, lock);
         return rows.isEmpty() ? null : rows.get(0);
     }
 
     private List<Map<String, Object>> loadExecutionRows(String userId, String conversationId) {
-        return jdbc.queryForList(EXECUTION_SELECT +
-                        " WHERE e.user_id=? AND e.conversation_id=? AND e.delete_flag=1 " +
-                        "ORDER BY e.created_at,e.id",
-                userId, conversationId);
+        return mapper.findExecutions(userId, conversationId);
     }
 
     private List<Map<String, Object>> loadExecutions(String userId, String conversationId) {
@@ -841,10 +716,8 @@ public class ControlService {
 
     private Map<String, Object> findExecution(
             String userId, String conversationId, String runId, boolean lock) {
-        List<Map<String, Object>> rows = jdbc.queryForList(
-                EXECUTION_SELECT + " WHERE e.user_id=? AND e.conversation_id=? " +
-                        "AND e.run_id=? AND e.delete_flag=1" + (lock ? " FOR UPDATE" : ""),
-                userId, conversationId, runId);
+        List<Map<String, Object>> rows = mapper.findExecution(
+                userId, conversationId, runId, lock);
         return rows.isEmpty() ? null : rows.get(0);
     }
 
@@ -871,14 +744,8 @@ public class ControlService {
         if (TERMINAL_STATUSES.contains(current)) return;
         if (!"running".equals(current) && !"cancel_requested".equals(current))
             throw new StaleExecutionException();
-        jdbc.update("UPDATE ai_agent_execution SET status='cancel_requested'," +
-                        "error_code=COALESCE(error_code,?),updated_at=CURRENT_TIMESTAMP " +
-                        "WHERE parent_execution_id=? AND status='running' AND delete_flag=1",
-                reason, root.get("id"));
-        jdbc.update("UPDATE ai_agent_execution SET status='cancel_requested'," +
-                        "error_code=COALESCE(error_code,?),updated_at=CURRENT_TIMESTAMP " +
-                        "WHERE id=? AND status='running' AND delete_flag=1",
-                reason, root.get("id"));
+        mapper.requestChildrenCancellation(reason, number(root.get("id")));
+        mapper.requestRootCancellation(reason, number(root.get("id")));
     }
 
     private void finishExecution(
@@ -894,10 +761,7 @@ public class ControlService {
             errorCode = (String) execution.get("errorCode");
             if (errorCode == null) errorCode = "cancelled";
         }
-        int updated = jdbc.update("UPDATE ai_agent_execution SET status=?,error_code=?," +
-                        "finished_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP " +
-                        "WHERE id=? AND delete_flag=1 AND status IN ('running','cancel_requested')",
-                status, errorCode, execution.get("id"));
+        int updated = mapper.finishExecution(number(execution.get("id")), status, errorCode);
         if (updated != 1) throw new StaleExecutionException();
     }
 
@@ -905,11 +769,7 @@ public class ControlService {
             String conversationId, String messageId, Long executionId,
             String role, Map<String, Object> messagePayload) {
         try {
-            Map<String, Object> existing = jdbc.queryForMap(
-                    "SELECT agent_execution_id AS executionId,role,payload " +
-                            "FROM ai_conversation_message " +
-                            "WHERE conversation_id=? AND message_id=?",
-                    conversationId, messageId);
+            Map<String, Object> existing = mapper.findMessage(conversationId, messageId);
             if (number(existing.get("executionId")) != executionId ||
                     !role.equals(existing.get("role")) ||
                     !json.readTree(String.valueOf(existing.get("payload")))
@@ -982,9 +842,7 @@ public class ControlService {
 
     private void requireOwnedActive(String userId, String conversationId) {
         try {
-            jdbc.queryForObject("SELECT id FROM ai_conversation WHERE conversation_id=? " +
-                            "AND user_id=? AND status='active' AND delete_flag=1",
-                    Long.class, conversationId, userId);
+            mapper.requireOwnedActive(conversationId, userId);
         } catch (EmptyResultDataAccessException error) {
             throw new NotFoundException("会话不存在或未激活");
         }
@@ -992,10 +850,7 @@ public class ControlService {
 
     private void requireOwned(String userId, String conversationId, boolean lock) {
         try {
-            jdbc.queryForObject("SELECT id FROM ai_conversation " +
-                            "WHERE conversation_id=? AND user_id=? AND delete_flag=1" +
-                            (lock ? " FOR UPDATE" : ""),
-                    Long.class, conversationId, userId);
+            mapper.requireOwned(conversationId, userId, lock);
         } catch (EmptyResultDataAccessException error) {
             throw new NotFoundException("会话不存在");
         }
@@ -1056,17 +911,6 @@ public class ControlService {
         } catch (Exception error) {
             throw new IllegalArgumentException(name + "不是有效 JSON");
         }
-    }
-
-    private static Map<String, Object> metadata(ResultSet rs) throws SQLException {
-        Map<String, Object> row = new LinkedHashMap<>();
-        row.put("conversationId", rs.getString("conversationId"));
-        row.put("title", rs.getString("title"));
-        row.put("status", rs.getString("status"));
-        row.put("executionStatus", rs.getString("executionStatus"));
-        row.put("createdAt", rs.getString("createdAt"));
-        row.put("updatedAt", rs.getString("updatedAt"));
-        return row;
     }
 
     private static Identity identity(String cookieHeader) {
