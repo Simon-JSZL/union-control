@@ -1,5 +1,70 @@
 # Project Overview
 
+## Mandatory Architecture Contract
+
+This section is the highest-level implementation constraint for every future
+feature iteration. New requirements must comply with it before lower sections,
+existing scenario code, or tests are considered. Existing code that conflicts
+with this contract is technical debt to remove, not a precedent to copy.
+
+### One browser-to-Agent gateway
+
+- Domain controllers own browser and MySQL interactions for their domain. They
+  must not proxy requests to a model service or expose callbacks, context APIs,
+  or tool replicas for py-app. All browser-to-Agent traffic belongs to
+  `LlmController` and the shared `AgentProxyService` execution methods.
+- A new business scenario may add its domain specialist Agent and domain tools
+  in py-app, plus its own CRUD/persistence services in control when required. It
+  must not add a scenario-specific LLM controller route, proxy method, bearer
+  credential, long-timeout HTTP client, tool forwarding endpoint, completion
+  callback, or alternate conversation persistence path.
+- Scheduling, batching, and other orchestration are invocation mechanisms, not
+  Agent domains. They may decide when to invoke work and persist their own job
+  state, but they must call the same normal Agent execution plane as an
+  interactive caller.
+
+### Reuse stream or non-stream runs
+
+- Use `/llm/chatMessage` when the caller needs AG-UI streaming and
+  `/llm/chatMessageSync` when it needs a final synchronous result. Both paths
+  must preserve the same CAS-authenticated identity and call the corresponding
+  shared py-app run endpoint.
+- Background work such as a due scheduled occurrence must invoke the shared
+  non-stream application service behind `chatMessageSync`; it must not create a
+  second browser route just to forward to the model, nor call a scenario-specific
+  py-app route.
+- Domain job state and final result payload may remain in domain tables. Normal
+  conversation, execution, and message records must be created through shared
+  `ControlService` ownership rather than direct inserts from a domain mapper.
+
+### Preserve one identity and tool path
+
+- The validated caller CAS cookie is the single user authorization context
+  forwarded to py-app and returned on all py-app-to-control tool calls. A
+  scenario service token may authenticate a truly user-independent fixed
+  system integration, but must never stand in for a user session or authorize
+  user-owned tools and data.
+- Background execution therefore requires an authentication-service-approved
+  delegated session or session exchange for the task owner. Persisting a raw
+  long-lived cookie, synthesizing a cookie from `userId`, or creating bearer-
+  authenticated copies of every tool endpoint is forbidden. Until the delegated
+  session mechanism exists, production background execution is blocked rather
+  than permitted to bypass the normal identity chain.
+- Each business tool has one control endpoint and one authorization
+  implementation. Scenario-prefixed clones are forbidden.
+
+### Layer and review gate
+
+Transaction/control-plane packages contain reusable orchestration and runtime
+mechanisms only; scenario business code belongs in its domain package. Before
+implementation, every feature proposal must identify: domain persistence
+ownership, the specialist and tools added or reused, stream versus non-stream
+mode, the shared LLM entrypoint, and the full cookie identity path. Introducing
+a second path in any category requires an explicit architecture decision
+recorded in this section before code is written. Tests must enforce reuse of the
+shared route and shared identity/tool path, and reviewers must reject violations
+even when isolated feature tests pass.
+
 ## Purpose
 
 `union-control` is the browser-facing control plane for the PydanticAI service.
