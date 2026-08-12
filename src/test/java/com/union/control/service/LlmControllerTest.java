@@ -49,6 +49,7 @@ import static org.springframework.test.web.servlet.setup.MockMvcBuilders.standal
 public class LlmControllerTest {
     private ControlService service;
     private AgentProxyService proxy;
+    private NonStreamRunService nonStream;
     private RestTemplate http;
     private MockRestServiceServer upstream;
     private MockMvc mvc;
@@ -59,9 +60,10 @@ public class LlmControllerTest {
         http = new RestTemplate();
         upstream = MockRestServiceServer.createServer(http);
         proxy = new AgentProxyService("http://py", "behavior-risk-token", http);
+        nonStream = new NonStreamRunService(proxy);
         when(service.claimAguiRun(anyString(), any(byte[].class)))
                 .thenReturn(claimedExecution());
-        mvc = standaloneSetup(new LlmController(service, proxy))
+        mvc = standaloneSetup(new LlmController(service, proxy, nonStream))
                 .setControllerAdvice(new ApiExceptionHandler()).build();
     }
 
@@ -71,7 +73,7 @@ public class LlmControllerTest {
                 .determineCandidateConstructors(LlmController.class, "llmController");
         assertNotNull(constructors);
         assertEquals(1, constructors.length);
-        assertEquals(2, constructors[0].getParameterTypes().length);
+        assertEquals(3, constructors[0].getParameterTypes().length);
     }
 
     @Test
@@ -162,7 +164,7 @@ public class LlmControllerTest {
             }
         };
 
-        new LlmController(service, proxy)
+        new LlmController(service, proxy, nonStream)
                 .chatMessage("{}".getBytes("UTF-8"), response);
 
         assertEquals(body.length, received.size());
@@ -192,7 +194,7 @@ public class LlmControllerTest {
             }
         };
 
-        new LlmController(service, proxy)
+        new LlmController(service, proxy, nonStream)
                 .chatMessage("{}".getBytes("UTF-8"), response);
 
         verify(service).cancelExecution(
@@ -237,6 +239,7 @@ public class LlmControllerTest {
                 .andRespond(withSuccess("{\"content\":{}}", MediaType.APPLICATION_JSON));
 
         mvc.perform(post("/llm/chatMessageSync")
+                .header(HttpHeaders.COOKIE, LocalAuth.cookieHeader())
                 .contentType(MediaType.APPLICATION_JSON).content("{\"question\":\"q\",\"input\":{}}"))
                 .andExpect(status().isOk());
         mvc.perform(post("/llm/behaviorRisk").contentType(MediaType.APPLICATION_JSON).content("{}"))
@@ -245,53 +248,10 @@ public class LlmControllerTest {
     }
 
     @Test
-    public void scheduledCallsUseTheUnifiedProxyWithSeparatedCredentials() {
-        AgentProxyService scheduledProxy = new AgentProxyService(
-                "http://py", "behavior-risk-token", "scheduled-token",
-                new ObjectMapper(), http, http);
-        upstream.expect(once(), requestTo(
-                "http://py/agent/v1/scenarios/scheduled-task-draft/runs"))
-                .andExpect(header(HttpHeaders.COOKIE, "CASSESSIONID=session-1"))
-                .andExpect(request -> assertNull(
-                        request.getHeaders().getFirst(HttpHeaders.AUTHORIZATION)))
-                .andRespond(withSuccess("{\"success\":true,\"data\":{}}", MediaType.APPLICATION_JSON));
-        upstream.expect(once(), requestTo(
-                "http://py/agent/v1/scenarios/scheduled-task/runs"))
-                .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer scheduled-token"))
-                .andExpect(request -> assertNull(request.getHeaders().getFirst(HttpHeaders.COOKIE)))
-                .andExpect(org.springframework.test.web.client.match.MockRestRequestMatchers
-                        .content().string("{\"runId\":7}"))
-                .andRespond(withSuccess(
-                        "{\"success\":true,\"data\":{\"content\":\"ok\"}}",
-                        MediaType.APPLICATION_JSON));
-
-        scheduledProxy.draftScheduledTask(
-                "CASSESSIONID=session-1", "{}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
-        assertEquals("ok", scheduledProxy.executeScheduledTask(7L).get("content"));
-
-        upstream.verify();
-    }
-
-    @Test
-    public void scheduledBusinessFailureIsNotRewrappedAsSuccess() {
-        AgentProxyService scheduledProxy = new AgentProxyService(
-                "http://py", "behavior-risk-token", "scheduled-token",
-                new ObjectMapper(), http, http);
-        upstream.expect(once(), requestTo(
-                "http://py/agent/v1/scenarios/scheduled-task-draft/runs"))
-                .andRespond(withSuccess(
-                        "{\"success\":false,\"errorMsg\":\"upstream detail\"}",
-                        MediaType.APPLICATION_JSON));
-
-        try {
-            scheduledProxy.draftScheduledTask(
-                    "CASSESSIONID=session-1",
-                    "{}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            fail("business failure must throw");
-        } catch (IllegalStateException error) {
-            assertEquals("py-app 业务请求失败", error.getMessage());
-        }
-        upstream.verify();
+    public void syncRejectsMissingCookieBeforeCallingTheAgent() throws Exception {
+        mvc.perform(post("/llm/chatMessageSync")
+                .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isUnauthorized());
     }
 
     private static Map<String, Object> ok(Object data) {

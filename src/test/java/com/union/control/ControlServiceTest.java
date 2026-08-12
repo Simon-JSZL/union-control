@@ -20,6 +20,7 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -56,6 +57,33 @@ public class ControlServiceTest {
                 LocalAuth.cookieHeader(), body.getBytes(StandardCharsets.UTF_8)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("frontend tools");
+    }
+
+    @Test
+    public void materializesTrustedCompletedConversationThroughControlMapper() {
+        org.mockito.Mockito.doAnswer(invocation -> {
+            @SuppressWarnings("unchecked") Map<String, Object> execution =
+                    (Map<String, Object>) invocation.getArguments()[0];
+            execution.put("id", 99L);
+            return 1;
+        }).when(mapper).insertCompletedRootExecution(
+                org.mockito.Matchers.<Map<String, Object>>any());
+
+        String conversationId = service.materializeCompletedConversation(
+                LocalAuth.cookieHeader(), "日报", "生成日报", "日报内容", "Coordinator");
+
+        assertThat(conversationId).startsWith("scheduled-");
+        verify(mapper).insertConversation(conversationId, LocalAuth.USER_ID, "日报");
+        verify(mapper).insertCompletedRootExecution(
+                org.mockito.Matchers.<Map<String, Object>>any());
+        verify(mapper).insertMessage(org.mockito.Matchers.eq(conversationId),
+                org.mockito.Matchers.eq(LocalAuth.USER_ID), org.mockito.Matchers.anyString(),
+                org.mockito.Matchers.eq(99L), org.mockito.Matchers.eq("user"),
+                org.mockito.Matchers.eq(1L), org.mockito.Matchers.contains("生成日报"));
+        verify(mapper).insertMessage(org.mockito.Matchers.eq(conversationId),
+                org.mockito.Matchers.eq(LocalAuth.USER_ID), org.mockito.Matchers.anyString(),
+                org.mockito.Matchers.eq(99L), org.mockito.Matchers.eq("assistant"),
+                org.mockito.Matchers.eq(2L), org.mockito.Matchers.contains("日报内容"));
     }
 
     @Test

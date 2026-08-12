@@ -43,6 +43,8 @@ public interface ControlMapper {
                             @Param("conversationId") String conversationId,
                             @Param("userId") String userId);
 
+    int insertCompletedRootExecution(Map<String, Object> execution);
+
     int updateChildrenStatus(@Param("parentExecutionId") Long parentExecutionId,
                              @Param("status") String status,
                              @Param("errorCode") String errorCode);

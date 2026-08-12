@@ -5,8 +5,9 @@ server:
 agent:
   py-app-base-url: ${PY_APP_BASE_URL:http://127.0.0.1:8083}
   behavior-risk-token: ${BEHAVIOR_RISK_TOKEN:}
-  scheduled-task-token: ${SCHEDULED_TASK_TOKEN:}
   scheduled-enabled: ${SCHEDULED_TASK_ENABLED:false}
+  # LocalAuth-only development adapter. Production must provide a real delegated-session service.
+  scheduled-local-delegated-session-enabled: ${SCHEDULED_TASK_LOCAL_DELEGATED_SESSION_ENABLED:false}
   scheduled-scan-interval-ms: ${SCHEDULED_TASK_SCAN_INTERVAL_MS:5000}
   scheduled-initial-delay-ms: ${SCHEDULED_TASK_INITIAL_DELAY_MS:1000}
   scheduled-scan-batch-size: ${SCHEDULED_TASK_SCAN_BATCH_SIZE:20}
@@ -14,8 +15,6 @@ agent:
   scheduled-worker-queue: ${SCHEDULED_TASK_WORKER_QUEUE:32}
   scheduled-max-run-seconds: ${SCHEDULED_TASK_MAX_RUN_SECONDS:930}
   scheduled-minimum-interval-seconds: ${SCHEDULED_TASK_MIN_INTERVAL_SECONDS:60}
-  scheduled-connect-timeout-ms: ${SCHEDULED_TASK_CONNECT_TIMEOUT_MS:5000}
-  scheduled-read-timeout-ms: ${SCHEDULED_TASK_READ_TIMEOUT_MS:930000}
   execution-max-age-seconds: ${AGENT_MAX_RUN_SECONDS:900}
   cancel-request-max-age-seconds: ${AGENT_CANCEL_GRACE_SECONDS:30}
   execution-cleanup-interval-ms: ${AGENT_CLEANUP_INTERVAL_MS:30000}

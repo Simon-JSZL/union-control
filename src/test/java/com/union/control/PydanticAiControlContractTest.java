@@ -63,7 +63,7 @@ public class PydanticAiControlContractTest {
     }
 
     @Test
-    public void scheduledDefaultsLeaveTransportMarginBeyondThePyRuntimeDeadline() throws Exception {
+    public void scheduledConfigHasNoDedicatedTokenOrProxyTimeouts() throws Exception {
         String yaml = new String(Files.readAllBytes(
                 Paths.get("src/main/resources/application.yml")), StandardCharsets.UTF_8);
         String scheduler = new String(Files.readAllBytes(Paths.get(
@@ -73,11 +73,12 @@ public class PydanticAiControlContractTest {
                 "src/main/java/com/union/control/service/AgentProxyService.java")),
                 StandardCharsets.UTF_8);
 
-        assertThat(yaml).contains(
-                "${SCHEDULED_TASK_MAX_RUN_SECONDS:930}",
-                "${SCHEDULED_TASK_READ_TIMEOUT_MS:930000}");
+        assertThat(yaml).contains("${SCHEDULED_TASK_MAX_RUN_SECONDS:930}")
+                .doesNotContain("SCHEDULED_TASK_TOKEN")
+                .doesNotContain("SCHEDULED_TASK_CONNECT_TIMEOUT_MS")
+                .doesNotContain("SCHEDULED_TASK_READ_TIMEOUT_MS");
         assertThat(scheduler).contains("${agent.scheduled-max-run-seconds:930}");
-        assertThat(proxy).contains("${agent.scheduled-read-timeout-ms:930000}");
+        assertThat(proxy).doesNotContain("scheduledTask").doesNotContain("scheduledHttp");
     }
 
     @Test
@@ -104,8 +105,9 @@ public class PydanticAiControlContractTest {
                 StandardCharsets.UTF_8);
 
         assertThat(service).contains("ScheduledTaskMapper").doesNotContain("JdbcTemplate");
-        assertThat(controller).contains("AgentProxyService").doesNotContain("ScheduledTaskProxyService");
-        assertThat(scheduler).contains("AgentProxyService").doesNotContain("ScheduledTaskProxyService");
+        assertThat(controller).doesNotContain("AgentProxyService").doesNotContain("/agent/scheduled");
+        assertThat(scheduler).contains("NonStreamRunService")
+                .doesNotContain("AgentProxyService").doesNotContain("Bearer ");
     }
 
     @Test

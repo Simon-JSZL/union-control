@@ -72,8 +72,6 @@ public interface ScheduledTaskMapper {
 
     Map<String, Object> findRunContext(@Param("runId") long runId);
 
-    String findRunnableOwner(@Param("runId") long runId);
-
     Map<String, Object> findRunForUpdate(@Param("runId") long runId);
 
     int completeRun(@Param("runId") long runId, @Param("resultPayload") String resultPayload);
@@ -86,20 +84,7 @@ public interface ScheduledTaskMapper {
 
     int markRunRead(@Param("runId") long runId);
 
-    int insertConversation(@Param("conversationId") String conversationId,
-                           @Param("userId") String userId,
-                           @Param("title") String title);
-
-    int insertExecution(Map<String, Object> execution);
-
-    int insertMessage(@Param("messageId") String messageId,
-                      @Param("conversationId") String conversationId,
-                      @Param("userId") String userId,
-                      @Param("executionId") long executionId,
-                      @Param("role") String role,
-                      @Param("sequence") long sequence,
-                      @Param("payload") String payload);
-
     int attachConversation(@Param("runId") long runId,
                            @Param("conversationId") String conversationId);
+
 }

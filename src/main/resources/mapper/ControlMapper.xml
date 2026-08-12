@@ -93,6 +93,15 @@
         VALUES (#{runId},#{conversationId},#{userId},NULL,'UnionCoordinatorAgent','running',1)
     </insert>
 
+    <insert id="insertCompletedRootExecution" parameterType="map"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO ai_agent_execution
+            (run_id,conversation_id,user_id,parent_execution_id,agent_name,status,
+             finished_at,delete_flag,created_at,updated_at)
+        VALUES (#{runId},#{conversationId},#{userId},NULL,#{agentName},'completed',
+                CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+    </insert>
+
     <update id="updateChildrenStatus">
         UPDATE ai_agent_execution
         SET status=#{status},error_code=#{errorCode},

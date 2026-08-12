@@ -1,8 +1,5 @@
 package com.union.control.scheduled;
 
-import com.union.control.service.LocalAuth;
-import com.union.control.service.AgentProxyService;
-import com.union.control.service.RunningAnalysisMockService;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -18,25 +15,9 @@ import java.util.Map;
 @RestController
 public class ScheduledTaskController {
     private final ScheduledTaskService service;
-    private final AgentProxyService proxy;
-    private final RunningAnalysisMockService tools;
 
-    public ScheduledTaskController(
-            ScheduledTaskService service,
-            AgentProxyService proxy,
-            RunningAnalysisMockService tools) {
+    public ScheduledTaskController(ScheduledTaskService service) {
         this.service = service;
-        this.proxy = proxy;
-        this.tools = tools;
-    }
-
-    @PostMapping(value = "/llm/scheduledTaskDraft", consumes = MediaType.APPLICATION_JSON_VALUE)
-    public Map<String, Object> draft(
-            @RequestHeader(value = HttpHeaders.COOKIE, required = false) String cookie,
-            @RequestBody byte[] payload) {
-        String casCookie = LocalAuth.authenticatedCookieHeader(cookie);
-        if (payload.length > 65536) throw new IllegalArgumentException("草案请求过大");
-        return ok(proxy.draftScheduledTask(casCookie, payload));
     }
 
     @PostMapping(value = "/llm/scheduledTaskCreate", consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -120,52 +101,6 @@ public class ScheduledTaskController {
         return service.open(cookie, id(payload, "runId"));
     }
 
-    @PostMapping("/agent/scheduledTaskRunContext")
-    public Map<String, Object> context(
-            @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
-            @RequestBody Map<String, Object> payload) {
-        return service.context(authorization, id(payload, "runId"));
-    }
-
-    @PostMapping("/agent/scheduledTaskRunComplete")
-    public Map<String, Object> complete(
-            @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
-            @RequestBody Map<String, Object> payload) {
-        return service.complete(authorization, payload);
-    }
-
-    @PostMapping("/agent/scheduledToolGetOrgInfo")
-    public Map<String, Object> getOrgInfo(
-            @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
-            @RequestBody Map<String, Object> payload) {
-        String owner = service.requireRunnable(authorization, id(payload, "runId"));
-        return tools.getOrgInfo(LocalAuth.cookieHeaderForUser(owner), payload);
-    }
-
-    @PostMapping("/agent/scheduledToolQueryBigData")
-    public Map<String, Object> queryBigData(
-            @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
-            @RequestBody Map<String, Object> payload) {
-        String owner = service.requireRunnable(authorization, id(payload, "runId"));
-        return tools.queryBigData(LocalAuth.cookieHeaderForUser(owner), payload);
-    }
-
-    @PostMapping("/agent/scheduledToolAnnounceList")
-    public Map<String, Object> announceList(
-            @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
-            @RequestBody Map<String, Object> payload) {
-        String owner = service.requireRunnable(authorization, id(payload, "runId"));
-        return tools.announceList(LocalAuth.cookieHeaderForUser(owner), payload);
-    }
-
-    @PostMapping("/agent/scheduledToolGetJiraInfo")
-    public Map<String, Object> getJiraInfo(
-            @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
-            @RequestBody Map<String, Object> payload) {
-        String owner = service.requireRunnable(authorization, id(payload, "runId"));
-        return tools.getJiraInfo(LocalAuth.cookieHeaderForUser(owner), payload);
-    }
-
     private static long id(Map<String, Object> payload, String name) {
         Object value = payload == null ? null : payload.get(name);
         if (!(value instanceof Number) || ((Number) value).longValue() <= 0)
@@ -173,10 +108,4 @@ public class ScheduledTaskController {
         return ((Number) value).longValue();
     }
 
-    private static Map<String, Object> ok(Object data) {
-        Map<String, Object> response = new LinkedHashMap<>();
-        response.put("success", true);
-        response.put("data", data);
-        return response;
-    }
 }

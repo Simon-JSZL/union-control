@@ -24,6 +24,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.regex.Pattern;
 
 @Service
@@ -122,6 +123,41 @@ public class ControlService {
         int updated = mapper.softDeleteConversation(conversationId, identity.userId);
         if (updated != 1) throw new NotFoundException("会话不存在");
         return ok(null);
+    }
+
+    /** Materializes a trusted completed result through the normal conversation owner. */
+    @Transactional
+    public String materializeCompletedConversation(
+            String cookieHeader, String title, String prompt, String content, String agentName) {
+        Identity identity = identity(cookieHeader);
+        String random = UUID.randomUUID().toString().replace("-", "");
+        String conversationId = "scheduled-" + random;
+        String runId = "scheduled-open-" + random;
+        mapper.insertConversation(conversationId, identity.userId, title);
+        Map<String, Object> execution = new LinkedHashMap<>();
+        execution.put("runId", runId);
+        execution.put("conversationId", conversationId);
+        execution.put("userId", identity.userId);
+        execution.put("agentName", agentName);
+        mapper.insertCompletedRootExecution(execution);
+        insertTrustedMessage(conversationId, identity.userId,
+                "scheduled-user-" + random, number(execution.get("id")), "user", 1, prompt);
+        insertTrustedMessage(conversationId, identity.userId,
+                "scheduled-assistant-" + random, number(execution.get("id")), "assistant", 2, content);
+        return conversationId;
+    }
+
+    private void insertTrustedMessage(
+            String conversationId, String userId, String messageId, long executionId,
+            String role, long sequence, String content) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("content", content);
+        try {
+            mapper.insertMessage(conversationId, userId, messageId, executionId,
+                    role, sequence, json.writeValueAsString(payload));
+        } catch (Exception error) {
+            throw new IllegalArgumentException("可信消息无法持久化", error);
+        }
     }
 
     @Transactional(isolation = Isolation.READ_COMMITTED)

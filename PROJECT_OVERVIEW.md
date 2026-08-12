@@ -86,6 +86,8 @@ Only GET and POST endpoints are used in production.
 Natural-language scheduled-task browser APIs also live under `/llm/**`.
 They create `ONCE`, six-field Spring `CRON`, or fixed `INTERVAL` tasks and
 expose task/run lists, unread results, and an explicit open-result action.
+Draft generation is an ordinary browser call to `/llm/chatMessageSync`; there
+is no scheduled-task-specific model endpoint.
 
 ## Protocol
 
@@ -152,9 +154,11 @@ The scheduled-task flow is:
    truth for `PENDING` / `RUNNING` / terminal progress, so pause/start cannot
    enqueue the consumed occurrence again.
 2. Pending runs are moved to `RUNNING` and submitted to a bounded worker pool.
-   Control calls py-app with only the run ID and the scheduled-task bearer
-   credential; py-app obtains the trusted task context and uses the owner-bound
-   read-only tool routes through control.
+   Control loads the prompt, owner, timezone, and effective occurrence time,
+   obtains a delegated CAS session for that owner, builds the existing sync
+   request contract, and invokes the same non-stream application service used by
+   `/llm/chatMessageSync`. py-app uses the normal cookie-authenticated `/agent/*`
+   tool routes.
 3. Every terminal run is unread until opened. Successful py-app content is
    stored as bounded JSON; failed runs retain only a fixed safe error. Neither
    creates a conversation in the background.
@@ -185,9 +189,10 @@ migrated or retained because the feature was not released.
   forward and validate that `CASSESSIONID`.
 - Fixed business scenarios share a generic Authorization-token mechanism.
   Behavior risk currently uses `BEHAVIOR_RISK_TOKEN`.
-- Scheduled execution context and read-only scheduled tools use the independent
-  `SCHEDULED_TASK_TOKEN`; the scheduler is disabled by default and startup
-  fails if it is enabled without that token.
+- Scheduled execution uses a delegated CAS session from the authentication
+  boundary. The scheduler is disabled by default and startup fails if it is
+  enabled without a configured delegated-session provider. The explicit local
+  adapter supports only the fixed `LocalAuth` mock user and is disabled by default.
 - Conversation completion and cancellation validate user/conversation/run
   ownership.
 - Memory paths must begin with `<authenticated-user>/personal/`.
@@ -196,27 +201,16 @@ migrated or retained because the feature was not released.
 
 ## Scheduled-task configuration
 
-- `SCHEDULED_TASK_TOKEN` is the shared secret used only by control and py-app
-  scheduled routes. Both services must use the same non-empty value; do not
-  expose it to the browser.
-- When `PY_APP_BASE_URL` crosses a trusted host boundary, protect this bearer
-  credential with HTTPS plus mTLS or an equivalent authenticated service mesh;
-  plain HTTP is suitable only for loopback development.
 - `SCHEDULED_TASK_ENABLED` controls claiming and execution and defaults to
-  `false`. Control fails startup when it is `true` and the token is empty.
+  `false`. Control fails startup when it is `true` and no delegated-session
+  provider is configured.
+- `SCHEDULED_TASK_LOCAL_DELEGATED_SESSION_ENABLED` enables only the clearly
+  marked `LocalAuth` development adapter. It must remain disabled in production.
 - Scanner tuning: `SCHEDULED_TASK_INITIAL_DELAY_MS`,
   `SCHEDULED_TASK_SCAN_INTERVAL_MS`, and `SCHEDULED_TASK_SCAN_BATCH_SIZE`.
 - Worker tuning: `SCHEDULED_TASK_WORKER_THREADS`,
   `SCHEDULED_TASK_WORKER_QUEUE`, and `SCHEDULED_TASK_MAX_RUN_SECONDS`.
-- Contract limits: `SCHEDULED_TASK_MIN_INTERVAL_SECONDS`,
-  `SCHEDULED_TASK_CONNECT_TIMEOUT_MS`, and
-  `SCHEDULED_TASK_READ_TIMEOUT_MS`.
-
-The defaults leave 30 seconds beyond py-app's 900-second runtime deadline:
-`SCHEDULED_TASK_MAX_RUN_SECONDS=930` and
-`SCHEDULED_TASK_READ_TIMEOUT_MS=930000`. Preserve that transport margin when
-overriding them. A shorter proxy timeout can mark a still-running Agent as
-failed while py-app continues until its own deadline.
+- Contract limit: `SCHEDULED_TASK_MIN_INTERVAL_SECONDS`.
 
 Defaults are defined in `src/main/resources/application.yml`. Keep the
 scheduler disabled while deploying or rolling back incompatible control and
@@ -228,8 +222,8 @@ Roll out in this order:
 
 1. Apply `deploy/sql/20260810_add_agent_scheduled_tasks.sql`; it creates
    `agent_scheduled_task` before its child `agent_scheduled_task_run`.
-2. Configure the same scheduled-task credential in control and py-app, deploy
-   both services, and leave control scheduling disabled.
+2. Deploy the authentication-service delegated-session integration, control,
+   and py-app, and leave control scheduling disabled.
 3. Deploy the web UI and verify draft, create, update, list, pause/start, and result
    APIs while no background run can be claimed.
 4. Enable scheduling on control only after the cross-service contract and

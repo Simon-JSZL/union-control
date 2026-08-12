@@ -3,6 +3,7 @@ package com.union.control.scheduled;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.union.control.service.LocalAuth;
+import com.union.control.service.ControlService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.support.CronSequenceGenerator;
@@ -10,8 +11,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
@@ -29,7 +28,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.TimeZone;
-import java.util.UUID;
 
 @Service
 public class ScheduledTaskService {
@@ -40,18 +38,18 @@ public class ScheduledTaskService {
     private final ScheduledTaskMapper mapper;
     private final ObjectMapper json;
     private final long minimumIntervalSeconds;
-    private final String internalToken;
+    private final ControlService controlService;
 
     @Autowired
     public ScheduledTaskService(
             ScheduledTaskMapper mapper,
             ObjectMapper json,
             @Value("${agent.scheduled-minimum-interval-seconds:60}") long minimumIntervalSeconds,
-            @Value("${agent.scheduled-task-token:}") String internalToken) {
+            ControlService controlService) {
         this.mapper = mapper;
         this.json = json;
         this.minimumIntervalSeconds = minimumIntervalSeconds;
-        this.internalToken = internalToken == null ? "" : internalToken;
+        this.controlService = controlService;
     }
 
     @Transactional(isolation = Isolation.REPEATABLE_READ)
@@ -186,36 +184,12 @@ public class ScheduledTaskService {
         return mapper.beginRun(runId) == 1;
     }
 
-    public Map<String, Object> context(String authorization, long runId) {
-        requireInternal(authorization);
+    public Map<String, Object> executionContext(long runId) {
         Map<String, Object> row = mapper.findRunContext(runId);
         if (row == null) throw new NotFoundException("运行记录不存在或不可执行");
-        return ok(row);
-    }
-
-    public String requireRunnable(String authorization, long runId) {
-        requireInternal(authorization);
-        String userId = mapper.findRunnableOwner(runId);
-        if (userId == null)
-            throw new NotFoundException("运行记录不存在或不可执行");
-        if (userId.trim().isEmpty()) throw new DataCorruptionException();
-        return userId;
-    }
-
-    @Transactional
-    public Map<String, Object> complete(String authorization, Map<String, Object> payload) {
-        requireInternal(authorization);
-        long runId = positiveLong(payload.get("runId"), "runId");
-        String status = payload.get("status") == null ? "SUCCEEDED" : upper(text(payload, "status", 16, true));
-        if ("FAILED".equals(status)) {
-            failRun(runId, text(payload, "errorCode", 64, false),
-                    "定时任务执行失败");
-        } else if ("SUCCEEDED".equals(status)) {
-            completeFromProxy(runId, payload);
-        } else {
-            throw new IllegalArgumentException("status 非法");
-        }
-        return ok(null);
+        String owner = string(row, "userId");
+        if (owner == null || owner.trim().isEmpty()) throw new DataCorruptionException();
+        return row;
     }
 
     @Transactional
@@ -262,7 +236,8 @@ public class ScheduledTaskService {
         Object existing = run.get("resultConversationId");
         if (existing != null && !String.valueOf(existing).isEmpty()) {
             mapper.markRunRead(runId);
-            return ok(Collections.<String, Object>singletonMap("conversationId", existing));
+            return ok(Collections.<String, Object>singletonMap(
+                    "conversationId", String.valueOf(existing)));
         }
         String status = string(run, "status");
         if (!terminal(status)) throw new ConflictException("运行尚未结束");
@@ -270,37 +245,9 @@ public class ScheduledTaskService {
         String content = "SUCCEEDED".equals(status)
                 ? rawText(result, "content", 1000000, true)
                 : safeError(string(run, "errorMessage"), "定时任务执行失败", 512);
-        String random = UUID.randomUUID().toString().replace("-", "");
-        String conversationId = "scheduled-" + runId + "-" + random;
-        String executionRunId = "scheduled-open-" + runId + "-" + random;
-        String title = string(run, "title");
-        mapper.insertConversation(conversationId, userId, title);
-        Map<String, Object> execution = new LinkedHashMap<>();
-        execution.put("runId", executionRunId);
-        execution.put("conversationId", conversationId);
-        execution.put("userId", userId);
-        execution.put("agentName", optionalText(
-                result, "agentName", 128, "ScheduledTaskAgent"));
-        mapper.insertExecution(execution);
-        long executionId = number(execution.get("id"));
-        List<Map<String, Object>> messages = messages(
-                string(run, "prompt"), content, runId);
-        long sequence = 0;
-        for (Map<String, Object> message : messages) {
-            String role = text(message, "role", 32, true).toLowerCase(Locale.ROOT);
-            String messageId = optionalText(message, "id", 128,
-                    "scheduled-message-" + runId + "-" + (++sequence));
-            Map<String, Object> body = new LinkedHashMap<>(message);
-            body.remove("id");
-            body.remove("role");
-            try {
-                mapper.insertMessage(messageId, conversationId, userId, executionId,
-                        role, sequence, json.writeValueAsString(body));
-            } catch (Exception error) {
-                if (error instanceof RuntimeException) throw (RuntimeException) error;
-                throw new IllegalArgumentException("AG-UI message 非法");
-            }
-        }
+        String conversationId = controlService.materializeCompletedConversation(
+                cookie, string(run, "title"), string(run, "prompt"), content,
+                optionalText(result, "agentName", 128, "ScheduledTaskAgent"));
         mapper.attachConversation(runId, conversationId);
         Map<String, Object> opened = new LinkedHashMap<>();
         opened.put("conversationId", conversationId);
@@ -436,26 +383,6 @@ public class ScheduledTaskService {
         } catch (Exception error) {
             throw new DataCorruptionException();
         }
-    }
-
-    private static List<Map<String, Object>> messages(String prompt, String content, long runId) {
-        Map<String, Object> user = new LinkedHashMap<>();
-        user.put("id", "scheduled-user-" + runId);
-        user.put("role", "user");
-        user.put("content", prompt);
-        Map<String, Object> assistant = new LinkedHashMap<>();
-        assistant.put("id", "scheduled-assistant-" + runId);
-        assistant.put("role", "assistant");
-        assistant.put("content", content);
-        return Arrays.asList(user, assistant);
-    }
-
-    private void requireInternal(String authorization) {
-        if (internalToken.isEmpty() || authorization == null || !authorization.startsWith("Bearer "))
-            throw new UnauthorizedException();
-        byte[] expected = internalToken.getBytes(StandardCharsets.UTF_8);
-        byte[] actual = authorization.substring(7).getBytes(StandardCharsets.UTF_8);
-        if (!MessageDigest.isEqual(expected, actual)) throw new UnauthorizedException();
     }
 
     private static Map<String, Object> pageData(

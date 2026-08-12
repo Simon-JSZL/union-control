@@ -2,6 +2,7 @@ package com.union.control.scheduled;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.union.control.service.LocalAuth;
+import com.union.control.service.ControlService;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
@@ -34,27 +35,21 @@ import static org.mockito.Mockito.when;
 public class ScheduledTaskServiceTest {
     private ScheduledTaskMapper mapper;
     private ScheduledTaskService service;
+    private ControlService controlService;
 
     @Before
     public void setUp() {
         mapper = mock(ScheduledTaskMapper.class);
-        service = new ScheduledTaskService(mapper, new ObjectMapper(), 60, "secret-token");
+        controlService = mock(ControlService.class);
+        service = new ScheduledTaskService(mapper, new ObjectMapper(), 60, controlService);
     }
 
     @Test
-    public void internalContextRejectsMissingAndWrongBearerBeforeDatabaseAccess() {
-        assertThatThrownBy(() -> service.context(null, 1))
-                .isInstanceOf(ScheduledTaskService.UnauthorizedException.class);
-        assertThatThrownBy(() -> service.context("Bearer wrong", 1))
-                .isInstanceOf(ScheduledTaskService.UnauthorizedException.class);
-    }
-
-    @Test
-    public void runnableValidationReturnsTheTrustedRunOwner() {
-        when(mapper.findRunnableOwner(7L)).thenReturn(LocalAuth.USER_ID);
-
-        assertThat(service.requireRunnable("Bearer secret-token", 7))
-                .isEqualTo(LocalAuth.USER_ID);
+    public void executionContextComesFromTheRunningDomainRun() {
+        Map<String, Object> context = new LinkedHashMap<>();
+        context.put("userId", LocalAuth.USER_ID);
+        when(mapper.findRunContext(7L)).thenReturn(context);
+        assertThat(service.executionContext(7L)).isSameAs(context);
     }
 
     @Test
@@ -221,7 +216,8 @@ public class ScheduledTaskServiceTest {
 
         assertThat(data.get("conversationId")).isEqualTo("scheduled-7");
         verify(mapper).markRunRead(7L);
-        verify(mapper, never()).insertConversation(anyString(), anyString(), anyString());
+        verify(controlService, never()).materializeCompletedConversation(
+                anyString(), anyString(), anyString(), anyString(), anyString());
     }
 
     @Test
@@ -233,7 +229,8 @@ public class ScheduledTaskServiceTest {
                     .isInstanceOf(ScheduledTaskService.ConflictException.class)
                     .hasMessageContaining("尚未结束");
         }
-        verify(mapper, never()).insertConversation(anyString(), anyString(), anyString());
+        verify(controlService, never()).materializeCompletedConversation(
+                anyString(), anyString(), anyString(), anyString(), anyString());
     }
 
     @Test
@@ -244,7 +241,8 @@ public class ScheduledTaskServiceTest {
                 .isInstanceOf(ScheduledTaskService.NotFoundException.class);
 
         verify(mapper).findOwnedRun(7L, LocalAuth.USER_ID, true);
-        verify(mapper, never()).insertConversation(anyString(), anyString(), anyString());
+        verify(controlService, never()).materializeCompletedConversation(
+                anyString(), anyString(), anyString(), anyString(), anyString());
     }
 
     @Test
@@ -254,33 +252,17 @@ public class ScheduledTaskServiceTest {
         run.put("prompt", "可信任务提示");
         run.put("resultPayload", new ObjectMapper().writeValueAsString(result()));
         when(mapper.findOwnedRun(7L, LocalAuth.USER_ID, true)).thenReturn(run);
-        doAnswer(invocation -> {
-            @SuppressWarnings("unchecked") Map<String, Object> execution =
-                    (Map<String, Object>) invocation.getArguments()[0];
-            execution.put("id", 99L);
-            return 1;
-        }).when(mapper).insertExecution(org.mockito.Matchers.<Map<String, Object>>any());
+        when(controlService.materializeCompletedConversation(anyString(), anyString(),
+                anyString(), anyString(), anyString())).thenReturn("scheduled-7-shared");
 
         @SuppressWarnings("unchecked") Map<String, Object> data = (Map<String, Object>)
                 service.open(LocalAuth.cookieHeader(), 7).get("data");
 
-        assertThat(String.valueOf(data.get("conversationId"))).startsWith("scheduled-7-");
-        verify(mapper).insertConversation(anyString(), eq(LocalAuth.USER_ID), eq("日报"));
-        ArgumentCaptor<Map> execution = ArgumentCaptor.forClass(Map.class);
-        verify(mapper).insertExecution(execution.capture());
-        assertThat(execution.getValue())
-                .containsEntry("conversationId", data.get("conversationId"))
-                .containsEntry("userId", LocalAuth.USER_ID)
-                .containsEntry("agentName", "ScheduledTaskAgent")
-                .doesNotContainKey("parentExecutionId");
-        verify(mapper, times(2)).insertMessage(anyString(), anyString(),
-                eq(LocalAuth.USER_ID), eq(99L), anyString(),
-                org.mockito.Matchers.anyLong(), anyString());
-        verify(mapper).insertMessage(eq("scheduled-user-7"), anyString(),
-                eq(LocalAuth.USER_ID), eq(99L), eq("user"), eq(1L), contains("可信任务提示"));
-        verify(mapper).insertMessage(eq("scheduled-assistant-7"), anyString(),
-                eq(LocalAuth.USER_ID), eq(99L), eq("assistant"), eq(2L), contains("日报内容"));
-        verify(mapper).attachConversation(eq(7L), anyString());
+        assertThat(data.get("conversationId")).isEqualTo("scheduled-7-shared");
+        verify(controlService).materializeCompletedConversation(
+                LocalAuth.cookieHeader(), "日报", "可信任务提示", "日报内容",
+                "ScheduledTaskAgent");
+        verify(mapper).attachConversation(7L, "scheduled-7-shared");
     }
 
     @Test
@@ -290,22 +272,15 @@ public class ScheduledTaskServiceTest {
         run.put("prompt", "执行可信任务");
         run.put("errorMessage", "定时任务执行失败");
         when(mapper.findOwnedRun(7L, LocalAuth.USER_ID, true)).thenReturn(run);
-        doAnswer(invocation -> {
-            @SuppressWarnings("unchecked") Map<String, Object> execution =
-                    (Map<String, Object>) invocation.getArguments()[0];
-            execution.put("id", 99L);
-            return 1;
-        }).when(mapper).insertExecution(org.mockito.Matchers.<Map<String, Object>>any());
+        when(controlService.materializeCompletedConversation(anyString(), anyString(),
+                anyString(), anyString(), anyString())).thenReturn("scheduled-7-failed");
 
         service.open(LocalAuth.cookieHeader(), 7);
 
-        verify(mapper).insertMessage(eq("scheduled-user-7"), anyString(),
-                eq(LocalAuth.USER_ID), eq(99L), eq("user"), eq(1L),
-                contains("执行可信任务"));
-        verify(mapper).insertMessage(eq("scheduled-assistant-7"), anyString(),
-                eq(LocalAuth.USER_ID), eq(99L), eq("assistant"), eq(2L),
-                contains("定时任务执行失败"));
-        verify(mapper).attachConversation(eq(7L), anyString());
+        verify(controlService).materializeCompletedConversation(
+                LocalAuth.cookieHeader(), "失败任务", "执行可信任务",
+                "定时任务执行失败", "ScheduledTaskAgent");
+        verify(mapper).attachConversation(7L, "scheduled-7-failed");
     }
 
     @Test
@@ -356,22 +331,15 @@ public class ScheduledTaskServiceTest {
     }
 
     @Test
-    public void materializedMessagesAreRootHistoryInSequence() throws Exception {
+    public void scheduledMapperNeverOwnsNormalConversationPersistence() throws Exception {
         String scheduledMapper = new String(Files.readAllBytes(Paths.get(
                 "src/main/resources/mapper/ScheduledTaskMapper.xml")),
                 StandardCharsets.UTF_8);
-        String controlMapper = new String(Files.readAllBytes(Paths.get(
-                "src/main/resources/mapper/ControlMapper.xml")),
-                StandardCharsets.UTF_8);
-
         assertThat(scheduledMapper)
-                .contains("(run_id,conversation_id,user_id,parent_execution_id")
-                .contains("VALUES (#{runId},#{conversationId},#{userId},NULL")
-                .contains("#{role},#{sequence}")
+                .doesNotContain("INSERT INTO ai_conversation")
+                .doesNotContain("INSERT INTO ai_agent_execution")
+                .doesNotContain("INSERT INTO ai_conversation_message")
                 .contains("SET result_conversation_id=#{conversationId},read_flag=1");
-        assertThat(controlMapper)
-                .contains("e.parent_execution_id IS NULL")
-                .contains("ORDER BY m.sequence_no");
     }
 
     @Test
@@ -391,21 +359,6 @@ public class ScheduledTaskServiceTest {
         assertThat(decoded).containsEntry("content", "日报内容")
                 .containsEntry("agentName", "ScheduledTaskAgent")
                 .doesNotContainKeys("messages", "providerSecret");
-    }
-
-    @Test
-    public void internalFailureDoesNotPersistAnUpstreamErrorMessage() {
-        Map<String, Object> run = run("RUNNING");
-        when(mapper.findRunForUpdate(7L)).thenReturn(run);
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("runId", 7L);
-        payload.put("status", "FAILED");
-        payload.put("errorCode", "scheduled_model_error");
-        payload.put("errorMessage", "provider password=top-secret");
-
-        service.complete("Bearer secret-token", payload);
-
-        verify(mapper).failRun(7L, "scheduled_model_error", "定时任务执行失败");
     }
 
     private static Map<String, Object> run(String status) {

@@ -6,15 +6,13 @@ Configuration:
 
 - `PY_APP_BASE_URL`
 - `BEHAVIOR_RISK_TOKEN` for the fixed behavior-risk scenario
-- `SCHEDULED_TASK_TOKEN` shared only by control and py-app scheduled routes
-- `SCHEDULED_TASK_ENABLED` (default `false`; enable after both services share the token)
+- `SCHEDULED_TASK_ENABLED` (default `false`)
+- `SCHEDULED_TASK_LOCAL_DELEGATED_SESSION_ENABLED` (default `false`; local `LocalAuth` development only)
 - `SCHEDULED_TASK_SCAN_INTERVAL_MS` (default `5000`)
 - `SCHEDULED_TASK_WORKER_THREADS` (default `2`)
 - `SCHEDULED_TASK_WORKER_QUEUE` (default `32`)
 - `SCHEDULED_TASK_MAX_RUN_SECONDS` (default `930`)
 - `SCHEDULED_TASK_MIN_INTERVAL_SECONDS` (default `60`)
-- `SCHEDULED_TASK_CONNECT_TIMEOUT_MS` (default `5000`)
-- `SCHEDULED_TASK_READ_TIMEOUT_MS` (default `930000`; includes 30 seconds of margin beyond py-app's 900-second runtime deadline)
 - `AGENT_MAX_RUN_SECONDS` (default `900`)
 - `AGENT_CANCEL_GRACE_SECONDS` (default `30`)
 - `AGENT_CLEANUP_INTERVAL_MS` (default `30000`)
@@ -46,7 +44,11 @@ AG-UI conversation and messages.
 Existing databases must apply
 `deploy/sql/20260810_add_agent_scheduled_tasks.sql` before enabling the
 scheduler.
-Startup fails closed when scheduling is enabled without `SCHEDULED_TASK_TOKEN`.
+The scheduler calls the same non-stream Agent run path as `/llm/chatMessageSync`
+and forwards an authentication-service-approved delegated CAS cookie for the task
+owner. Production must replace `LocalAuth` with that exchange; scheduling fails
+closed otherwise. The local delegated-session switch exists only for the fixed
+development mock user.
 Each user may keep at most 100 `ACTIVE` or `PAUSED` tasks.
 
 The isolated sensitive-data demo mirrors the production database boundary.

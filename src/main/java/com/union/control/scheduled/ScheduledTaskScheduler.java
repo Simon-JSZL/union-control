@@ -1,6 +1,10 @@
 package com.union.control.scheduled;
 
-import com.union.control.service.AgentProxyService;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.union.control.service.DelegatedSessionService;
+import com.union.control.service.NonStreamRunService;
+import org.springframework.http.ResponseEntity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -9,6 +13,8 @@ import org.springframework.stereotype.Component;
 
 import javax.annotation.PreDestroy;
 import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -23,7 +29,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class ScheduledTaskScheduler {
     private static final Logger LOG = LoggerFactory.getLogger(ScheduledTaskScheduler.class);
     private final ScheduledTaskService service;
-    private final AgentProxyService proxy;
+    private final NonStreamRunService nonStream;
+    private final DelegatedSessionService delegatedSessions;
+    private final ObjectMapper json;
     private final ThreadPoolExecutor workers;
     private final boolean enabled;
     private final int scanBatchSize;
@@ -33,18 +41,22 @@ public class ScheduledTaskScheduler {
 
     public ScheduledTaskScheduler(
             ScheduledTaskService service,
-            AgentProxyService proxy,
+            NonStreamRunService nonStream,
+            DelegatedSessionService delegatedSessions,
+            ObjectMapper json,
             @Value("${agent.scheduled-enabled:false}") boolean enabled,
             @Value("${agent.scheduled-worker-threads:2}") int workerThreads,
             @Value("${agent.scheduled-worker-queue:32}") int workerQueue,
             @Value("${agent.scheduled-scan-batch-size:20}") int scanBatchSize,
             @Value("${agent.scheduled-max-run-seconds:930}") int maxRunSeconds) {
         this.service = service;
-        this.proxy = proxy;
+        this.nonStream = nonStream;
+        this.delegatedSessions = delegatedSessions;
+        this.json = json;
         this.enabled = enabled;
-        if (enabled && !proxy.isScheduledTaskConfigured())
+        if (enabled && !delegatedSessions.isConfigured())
             throw new IllegalStateException(
-                    "SCHEDULED_TASK_ENABLED=true 时必须配置 SCHEDULED_TASK_TOKEN");
+                    "SCHEDULED_TASK_ENABLED=true 时必须配置受信任的 delegated session");
         this.scanBatchSize = Math.max(1, Math.min(scanBatchSize, 100));
         this.maxRunSeconds = Math.max(60, maxRunSeconds);
         int threads = Math.max(1, Math.min(workerThreads, 16));
@@ -78,7 +90,7 @@ public class ScheduledTaskScheduler {
                     try {
                         if (!service.beginRun(runId)) return;
                         try {
-                            service.completeFromProxy(runId, proxy.executeScheduledTask(runId));
+                            service.completeFromProxy(runId, execute(runId));
                         } catch (RuntimeException error) {
                             LOG.warn("Scheduled run failed run_id={} error_type={}",
                                     runId, error.getClass().getSimpleName());
@@ -97,6 +109,43 @@ public class ScheduledTaskScheduler {
             submitted.remove(runId);
             LOG.warn("Scheduled worker queue full run_id={}", runId);
         }
+    }
+
+    private Map<String, Object> execute(long runId) {
+        Map<String, Object> context = service.executionContext(runId);
+        String owner = required(context, "userId");
+        Map<String, Object> input = new LinkedHashMap<>();
+        input.put("scheduledTaskId", context.get("taskId"));
+        input.put("scheduledRunId", context.get("runId"));
+        input.put("scheduledAt", context.get("scheduledAt"));
+        input.put("timezone", context.get("timezone"));
+        Map<String, Object> request = new LinkedHashMap<>();
+        request.put("question", required(context, "prompt"));
+        request.put("input", input);
+        try {
+            ResponseEntity<byte[]> response = nonStream.run(
+                    delegatedSessions.cookieForOwner(owner), json.writeValueAsBytes(request));
+            if (!response.getStatusCode().is2xxSuccessful())
+                throw new IllegalStateException("Agent sync 返回非成功状态");
+            byte[] body = response.getBody();
+            if (body == null || body.length == 0 || body.length > 4000000)
+                throw new IllegalStateException("Agent sync 返回无效结果");
+            Map<String, Object> result = json.readValue(
+                    body, new TypeReference<Map<String, Object>>() {});
+            required(result, "content");
+            return result;
+        } catch (RuntimeException error) {
+            throw error;
+        } catch (Exception error) {
+            throw new IllegalStateException("Agent sync 请求或响应无效", error);
+        }
+    }
+
+    private static String required(Map<String, Object> values, String key) {
+        Object value = values.get(key);
+        if (!(value instanceof String) || ((String) value).trim().isEmpty())
+            throw new IllegalStateException("Scheduled run context 缺少 " + key);
+        return (String) value;
     }
 
     @PreDestroy

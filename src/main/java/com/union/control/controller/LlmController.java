@@ -3,6 +3,7 @@ package com.union.control.controller;
 import com.union.control.service.AgentProxyService;
 import com.union.control.service.ControlService;
 import com.union.control.service.LocalAuth;
+import com.union.control.service.NonStreamRunService;
 
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Controller;
@@ -10,6 +11,8 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.http.HttpHeaders;
 import org.springframework.web.bind.annotation.ResponseBody;
 
 import javax.servlet.http.HttpServletResponse;
@@ -20,10 +23,13 @@ import java.util.Map;
 public class LlmController {
     private final ControlService service;
     private final AgentProxyService proxy;
+    private final NonStreamRunService nonStream;
 
-    public LlmController(ControlService service, AgentProxyService proxy) {
+    public LlmController(ControlService service, AgentProxyService proxy,
+                         NonStreamRunService nonStream) {
         this.service = service;
         this.proxy = proxy;
+        this.nonStream = nonStream;
     }
 
     @GetMapping("/llm/conversationList")
@@ -94,8 +100,10 @@ public class LlmController {
 
     @PostMapping("/llm/chatMessageSync")
     @ResponseBody
-    public ResponseEntity<byte[]> chatMessageSync(@RequestBody byte[] payload) {
-        return proxy.sync(payload);
+    public ResponseEntity<byte[]> chatMessageSync(
+            @RequestHeader(value = HttpHeaders.COOKIE, required = false) String cookie,
+            @RequestBody byte[] payload) {
+        return nonStream.run(cookie, payload);
     }
 
     @PostMapping("/llm/behaviorRisk")

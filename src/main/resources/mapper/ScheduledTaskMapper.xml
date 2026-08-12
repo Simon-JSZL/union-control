@@ -203,13 +203,6 @@
         WHERE r.id=#{runId} AND r.delete_flag=1 AND r.status='RUNNING' AND t.delete_flag=1
     </select>
 
-    <select id="findRunnableOwner" resultType="string">
-        SELECT t.user_id
-        FROM agent_scheduled_task_run r
-        JOIN agent_scheduled_task t ON t.id=r.task_id
-        WHERE r.id=#{runId} AND r.status='RUNNING' AND r.delete_flag=1 AND t.delete_flag=1
-    </select>
-
     <select id="findRunForUpdate" resultType="map">
         SELECT id,task_id AS taskId,status
         FROM agent_scheduled_task_run
@@ -247,31 +240,10 @@
         SET read_flag=1,updated_at=UTC_TIMESTAMP(3) WHERE id=#{runId}
     </update>
 
-    <insert id="insertConversation">
-        INSERT INTO ai_conversation
-            (conversation_id,user_id,title,status,delete_flag,created_at,updated_at)
-        VALUES (#{conversationId},#{userId},#{title},'active',1,UTC_TIMESTAMP(3),UTC_TIMESTAMP(3))
-    </insert>
-
-    <insert id="insertExecution" parameterType="map" useGeneratedKeys="true" keyProperty="id">
-        INSERT INTO ai_agent_execution
-            (run_id,conversation_id,user_id,parent_execution_id,agent_name,status,finished_at,
-             delete_flag,created_at,updated_at)
-        VALUES (#{runId},#{conversationId},#{userId},NULL,#{agentName},'completed',
-                UTC_TIMESTAMP(3),1,UTC_TIMESTAMP(3),UTC_TIMESTAMP(3))
-    </insert>
-
-    <insert id="insertMessage">
-        INSERT INTO ai_conversation_message
-            (message_id,conversation_id,user_id,agent_execution_id,role,sequence_no,payload,
-             delete_flag,created_at,updated_at)
-        VALUES (#{messageId},#{conversationId},#{userId},#{executionId},#{role},#{sequence},
-                #{payload},1,UTC_TIMESTAMP(3),UTC_TIMESTAMP(3))
-    </insert>
-
     <update id="attachConversation">
         UPDATE agent_scheduled_task_run
         SET result_conversation_id=#{conversationId},read_flag=1,updated_at=UTC_TIMESTAMP(3)
         WHERE id=#{runId} AND result_conversation_id IS NULL
     </update>
+
 </mapper>
