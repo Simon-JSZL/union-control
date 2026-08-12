@@ -24,7 +24,7 @@ spring:
   datasource:
     url: ${MYSQL_URL:jdbc:mysql://127.0.0.1:3306/union_control?createDatabaseIfNotExist=true&allowPublicKeyRetrieval=true&useUnicode=true&characterEncoding=UTF-8&useSSL=false&serverTimezone=UTC}
     username: ${MYSQL_USER:root}
-    password: ${MYSQL_PASSWORD:mmls@HW902}
+    password: ${MYSQL_PASSWORD:}
     driver-class-name: com.mysql.cj.jdbc.Driver
     initialize: true
   redis:
