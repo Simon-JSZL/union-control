@@ -15,4 +15,10 @@ public class NonStreamRunService {
     public ResponseEntity<byte[]> run(String cookie, byte[] payload) {
         return proxy.sync(LocalAuth.authenticatedCookieHeader(cookie), payload);
     }
+
+    public ResponseEntity<byte[]> run(
+            String cookie, byte[] payload, String effectiveAt, String effectiveTimezone) {
+        return proxy.sync(LocalAuth.authenticatedCookieHeader(cookie), payload,
+                effectiveAt, effectiveTimezone);
+    }
 }

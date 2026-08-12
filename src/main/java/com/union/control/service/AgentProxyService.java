@@ -93,9 +93,17 @@ public class AgentProxyService {
     }
 
     public ResponseEntity<byte[]> sync(String cookie, byte[] payload) {
+        return sync(cookie, payload, null, null);
+    }
+
+    public ResponseEntity<byte[]> sync(
+            String cookie, byte[] payload, String effectiveAt, String effectiveTimezone) {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         headers.set(HttpHeaders.COOKIE, cookie);
+        if (effectiveAt != null) headers.set("X-Agent-Effective-At", effectiveAt);
+        if (effectiveTimezone != null)
+            headers.set("X-Agent-Effective-Timezone", effectiveTimezone);
         return http.exchange(
                 pyAppBaseUrl + "/agent/v1/runs/sync",
                 HttpMethod.POST,

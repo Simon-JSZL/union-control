@@ -124,7 +124,8 @@ public class ScheduledTaskScheduler {
         request.put("input", input);
         try {
             ResponseEntity<byte[]> response = nonStream.run(
-                    delegatedSessions.cookieForOwner(owner), json.writeValueAsBytes(request));
+                    delegatedSessions.cookieForOwner(owner), json.writeValueAsBytes(request),
+                    required(context, "scheduledAt"), required(context, "timezone"));
             if (!response.getStatusCode().is2xxSuccessful())
                 throw new IllegalStateException("Agent sync 返回非成功状态");
             byte[] body = response.getBody();

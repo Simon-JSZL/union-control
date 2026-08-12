@@ -115,6 +115,8 @@ public class LlmControllerTest {
         upstream.expect(once(), requestTo("http://py/agent/v1/runs/cancel"))
                 .andExpect(method(org.springframework.http.HttpMethod.POST))
                 .andExpect(header(HttpHeaders.COOKIE, LocalAuth.cookieHeader()))
+                .andExpect(request -> assertNull(
+                        request.getHeaders().getFirst("X-Agent-Effective-At")))
                 .andExpect(org.springframework.test.web.client.match.MockRestRequestMatchers
                         .content().string(
                                 "{\"conversationId\":\"thread-1\",\"runId\":\"run-1\"}"))
@@ -244,6 +246,24 @@ public class LlmControllerTest {
                 .andExpect(status().isOk());
         mvc.perform(post("/llm/behaviorRisk").contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isOk());
+        upstream.verify();
+    }
+
+    @Test
+    public void scheduledInvocationUsesTheSharedSyncEndpointWithTrustedRunContext()
+            throws Exception {
+        upstream.expect(once(), requestTo("http://py/agent/v1/runs/sync"))
+                .andExpect(method(org.springframework.http.HttpMethod.POST))
+                .andExpect(header(HttpHeaders.COOKIE, LocalAuth.cookieHeader()))
+                .andExpect(header("X-Agent-Effective-At", "2026-08-12T01:00:00Z"))
+                .andExpect(header("X-Agent-Effective-Timezone", "Asia/Shanghai"))
+                .andExpect(request -> assertNull(
+                        request.getHeaders().getFirst(HttpHeaders.AUTHORIZATION)))
+                .andRespond(withSuccess("{\"content\":\"ok\"}", MediaType.APPLICATION_JSON));
+
+        nonStream.run(LocalAuth.cookieHeader(), "{}".getBytes("UTF-8"),
+                "2026-08-12T01:00:00Z", "Asia/Shanghai");
+
         upstream.verify();
     }
 

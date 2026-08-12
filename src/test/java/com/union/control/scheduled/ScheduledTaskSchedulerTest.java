@@ -49,14 +49,16 @@ public class ScheduledTaskSchedulerTest {
         context.put("scheduledAt", "2026-08-12T01:00:00Z");
         context.put("timezone", "Asia/Shanghai");
         when(service.executionContext(7L)).thenReturn(context);
-        when(sync.run(eq(LocalAuth.cookieHeader()), any(byte[].class)))
+        when(sync.run(eq(LocalAuth.cookieHeader()), any(byte[].class),
+                eq("2026-08-12T01:00:00Z"), eq("Asia/Shanghai")))
                 .thenReturn(ResponseEntity.ok("{\"content\":\"完成\"}".getBytes("UTF-8")));
         ScheduledTaskScheduler scheduler = scheduler(service, sync, sessions, true);
         try {
             scheduler.scan();
             org.mockito.ArgumentCaptor<byte[]> payload =
                     org.mockito.ArgumentCaptor.forClass(byte[].class);
-            verify(sync, timeout(1000)).run(eq(LocalAuth.cookieHeader()), payload.capture());
+            verify(sync, timeout(1000)).run(eq(LocalAuth.cookieHeader()), payload.capture(),
+                    eq("2026-08-12T01:00:00Z"), eq("Asia/Shanghai"));
             @SuppressWarnings("unchecked") Map<String, Object> request =
                     new ObjectMapper().readValue(payload.getValue(), Map.class);
             assertThat(request).containsEntry("question", "生成日报");
