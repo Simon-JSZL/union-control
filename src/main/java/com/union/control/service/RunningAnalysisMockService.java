@@ -14,7 +14,10 @@ import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.LongConsumer;
 
+import org.springframework.stereotype.Service;
+
 /** Local mock data used by union-py-app's typed running-analysis tools. */
+@Service
 public class RunningAnalysisMockService {
     private static final long MIN_BIG_DATA_DELAY_MS = 1000L;
     private static final long MAX_BIG_DATA_DELAY_MS = 1200L;

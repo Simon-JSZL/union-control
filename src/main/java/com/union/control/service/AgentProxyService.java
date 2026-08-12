@@ -1,5 +1,7 @@
 package com.union.control.service;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
@@ -8,6 +10,7 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.client.ClientHttpResponse;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StreamUtils;
 import org.springframework.web.client.RestClientException;
@@ -20,6 +23,7 @@ import javax.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -28,20 +32,36 @@ public class AgentProxyService {
     private static final Logger logger = LoggerFactory.getLogger(AgentProxyService.class);
     private final String pyAppBaseUrl;
     private final String behaviorRiskToken;
+    private final String scheduledTaskToken;
+    private final ObjectMapper json;
     private final RestTemplate http;
+    private final RestTemplate scheduledHttp;
 
     @Autowired
     public AgentProxyService(
             @Value("${agent.py-app-base-url}") String pyAppBaseUrl,
-            @Value("${agent.behavior-risk-token}") String behaviorRiskToken) {
-        this(pyAppBaseUrl, behaviorRiskToken, new RestTemplate());
+            @Value("${agent.behavior-risk-token}") String behaviorRiskToken,
+            @Value("${agent.scheduled-task-token:}") String scheduledTaskToken,
+            @Value("${agent.scheduled-connect-timeout-ms:5000}") int scheduledConnectTimeoutMs,
+            @Value("${agent.scheduled-read-timeout-ms:930000}") int scheduledReadTimeoutMs,
+            ObjectMapper json) {
+        this(pyAppBaseUrl, behaviorRiskToken, scheduledTaskToken, json,
+                new RestTemplate(), restTemplate(scheduledConnectTimeoutMs, scheduledReadTimeoutMs));
     }
 
     AgentProxyService(String pyAppBaseUrl, String behaviorRiskToken, RestTemplate http) {
+        this(pyAppBaseUrl, behaviorRiskToken, "", new ObjectMapper(), http, http);
+    }
+
+    AgentProxyService(String pyAppBaseUrl, String behaviorRiskToken, String scheduledTaskToken,
+                      ObjectMapper json, RestTemplate http, RestTemplate scheduledHttp) {
         this.pyAppBaseUrl = pyAppBaseUrl.replaceAll("/+$", "");
         this.behaviorRiskToken = behaviorRiskToken;
+        this.scheduledTaskToken = scheduledTaskToken == null ? "" : scheduledTaskToken;
+        this.json = json;
         this.http = http;
-        this.http.setErrorHandler(new ResponseErrorHandler() {
+        this.scheduledHttp = scheduledHttp;
+        ResponseErrorHandler passThroughErrors = new ResponseErrorHandler() {
             @Override
             public boolean hasError(ClientHttpResponse response) {
                 return false;
@@ -49,7 +69,9 @@ public class AgentProxyService {
 
             @Override
             public void handleError(ClientHttpResponse response) {}
-        });
+        };
+        this.http.setErrorHandler(passThroughErrors);
+        this.scheduledHttp.setErrorHandler(passThroughErrors);
     }
 
     public int stream(byte[] payload, HttpServletResponse response) {
@@ -110,6 +132,35 @@ public class AgentProxyService {
                 behaviorRiskToken);
     }
 
+    public Map<String, Object> draftScheduledTask(String cookie, byte[] payload) {
+        HttpHeaders headers = jsonHeaders();
+        headers.set(HttpHeaders.COOKIE, cookie);
+        return scheduledExchange(
+                "/agent/v1/scenarios/scheduled-task-draft/runs", payload, headers);
+    }
+
+    public Map<String, Object> executeScheduledTask(long runId) {
+        if (!isScheduledTaskConfigured())
+            throw new IllegalStateException("SCHEDULED_TASK_TOKEN 未配置");
+        HttpHeaders headers = jsonHeaders();
+        headers.set(HttpHeaders.AUTHORIZATION, "Bearer " + scheduledTaskToken);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("runId", runId);
+        try {
+            return scheduledExchange(
+                    "/agent/v1/scenarios/scheduled-task/runs",
+                    json.writeValueAsBytes(body), headers);
+        } catch (RuntimeException error) {
+            throw error;
+        } catch (Exception error) {
+            throw new IllegalStateException("定时任务请求序列化失败", error);
+        }
+    }
+
+    public boolean isScheduledTaskConfigured() {
+        return !scheduledTaskToken.trim().isEmpty();
+    }
+
     public void cancel(String conversationId, String runId) {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
@@ -140,6 +191,51 @@ public class AgentProxyService {
                 new HttpEntity<>(payload, headers),
                 byte[].class
         );
+    }
+
+    private Map<String, Object> scheduledExchange(
+            String path, byte[] body, HttpHeaders headers) {
+        ResponseEntity<byte[]> response = scheduledHttp.exchange(
+                pyAppBaseUrl + path, HttpMethod.POST,
+                new HttpEntity<>(body, headers), byte[].class);
+        if (!response.getStatusCode().is2xxSuccessful())
+            throw new IllegalStateException(
+                    "py-app 返回状态 " + response.getStatusCodeValue());
+        try {
+            byte[] bytes = response.getBody();
+            if (bytes == null || bytes.length == 0) return Collections.emptyMap();
+            Map<String, Object> parsed = json.readValue(
+                    bytes, new TypeReference<Map<String, Object>>() {});
+            if (parsed.containsKey("success")) {
+                if (!Boolean.TRUE.equals(parsed.get("success")))
+                    throw new IllegalStateException("py-app 业务请求失败");
+                Object data = parsed.get("data");
+                if (!(data instanceof Map))
+                    throw new IllegalStateException("py-app 返回无效 JSON");
+                @SuppressWarnings("unchecked")
+                Map<String, Object> result = (Map<String, Object>) data;
+                return result;
+            }
+            return parsed;
+        } catch (IllegalStateException error) {
+            throw error;
+        } catch (Exception error) {
+            throw new IllegalStateException("py-app 返回无效 JSON", error);
+        }
+    }
+
+    private static HttpHeaders jsonHeaders() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.setAccept(Collections.singletonList(MediaType.APPLICATION_JSON));
+        return headers;
+    }
+
+    private static RestTemplate restTemplate(int connectTimeoutMs, int readTimeoutMs) {
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(connectTimeoutMs);
+        factory.setReadTimeout(readTimeoutMs);
+        return new RestTemplate(factory);
     }
 
     private static void copyHeader(ClientHttpResponse upstream, HttpServletResponse response, String name)

@@ -11,6 +11,15 @@ public final class LocalAuth {
         return "CASSESSIONID=" + CAS_SESSION_ID;
     }
 
+    public static String cookieHeaderForUser(String userId) {
+        if (!USER_ID.equals(userId)) throw new ControlService.UnauthorizedException();
+        return cookieHeader();
+    }
+
+    public static String authenticatedCookieHeader(String cookieHeader) {
+        return cookieHeaderForUser(authenticate(cookieHeader));
+    }
+
     public static String authenticate(String cookieHeader) {
         if (cookieHeader == null || cookieHeader.length() > 8192 ||
                 cookieHeader.indexOf('\r') >= 0 || cookieHeader.indexOf('\n') >= 0)

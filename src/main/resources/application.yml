@@ -5,17 +5,36 @@ server:
 agent:
   py-app-base-url: ${PY_APP_BASE_URL:http://127.0.0.1:8083}
   behavior-risk-token: ${BEHAVIOR_RISK_TOKEN:}
+  scheduled-task-token: ${SCHEDULED_TASK_TOKEN:}
+  scheduled-enabled: ${SCHEDULED_TASK_ENABLED:false}
+  scheduled-scan-interval-ms: ${SCHEDULED_TASK_SCAN_INTERVAL_MS:5000}
+  scheduled-initial-delay-ms: ${SCHEDULED_TASK_INITIAL_DELAY_MS:1000}
+  scheduled-scan-batch-size: ${SCHEDULED_TASK_SCAN_BATCH_SIZE:20}
+  scheduled-worker-threads: ${SCHEDULED_TASK_WORKER_THREADS:2}
+  scheduled-worker-queue: ${SCHEDULED_TASK_WORKER_QUEUE:32}
+  scheduled-max-run-seconds: ${SCHEDULED_TASK_MAX_RUN_SECONDS:930}
+  scheduled-minimum-interval-seconds: ${SCHEDULED_TASK_MIN_INTERVAL_SECONDS:60}
+  scheduled-connect-timeout-ms: ${SCHEDULED_TASK_CONNECT_TIMEOUT_MS:5000}
+  scheduled-read-timeout-ms: ${SCHEDULED_TASK_READ_TIMEOUT_MS:930000}
   execution-max-age-seconds: ${AGENT_MAX_RUN_SECONDS:900}
   cancel-request-max-age-seconds: ${AGENT_CANCEL_GRACE_SECONDS:30}
   execution-cleanup-interval-ms: ${AGENT_CLEANUP_INTERVAL_MS:30000}
 
 spring:
   datasource:
-    url: ${MYSQL_URL:jdbc:mysql://127.0.0.1:3306/union_control?createDatabaseIfNotExist=true&allowPublicKeyRetrieval=true&useUnicode=true&characterEncoding=UTF-8&useSSL=false&serverTimezone=Asia/Shanghai}
+    url: ${MYSQL_URL:jdbc:mysql://127.0.0.1:3306/union_control?createDatabaseIfNotExist=true&allowPublicKeyRetrieval=true&useUnicode=true&characterEncoding=UTF-8&useSSL=false&serverTimezone=UTC}
     username: ${MYSQL_USER:root}
-    password: ${MYSQL_PASSWORD:}
+    password: ${MYSQL_PASSWORD:mmls@HW902}
     driver-class-name: com.mysql.cj.jdbc.Driver
     initialize: true
+  redis:
+    host: ${REDIS_HOST:127.0.0.1}
+    port: ${REDIS_PORT:6379}
+    password: ${REDIS_PASSWORD:}
+    timeout: ${REDIS_TIMEOUT_MS:2000}
+
+sensitive:
+  reveal-ttl-seconds: ${SENSITIVE_REVEAL_TTL_SECONDS:300}
 
 mybatis:
   mapper-locations: classpath*:mapper/*.xml

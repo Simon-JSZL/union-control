@@ -1,6 +1,8 @@
 package com.union.control.controller;
 
 import com.union.control.service.ControlService;
+import com.union.control.scheduled.ScheduledTaskController;
+import com.union.control.scheduled.ScheduledTaskService;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -12,13 +14,20 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-@ControllerAdvice(assignableTypes = {AgentController.class, CommonController.class, LlmController.class})
+@ControllerAdvice(assignableTypes = {
+        AgentController.class, CommonController.class, LlmController.class,
+        ScheduledTaskController.class})
 public class ApiExceptionHandler {
     private static final Logger LOG = LoggerFactory.getLogger(ApiExceptionHandler.class);
 
     @ExceptionHandler(ControlService.UnauthorizedException.class)
     public ResponseEntity<Map<String, Object>> unauthorized() {
         return error(HttpStatus.UNAUTHORIZED, null, "缺少或无效登录会话");
+    }
+
+    @ExceptionHandler(ScheduledTaskService.UnauthorizedException.class)
+    public ResponseEntity<Map<String, Object>> scheduledUnauthorized() {
+        return error(HttpStatus.UNAUTHORIZED, "scheduled_unauthorized", "缺少或无效服务凭证");
     }
 
     @ExceptionHandler(IllegalArgumentException.class)
@@ -29,6 +38,24 @@ public class ApiExceptionHandler {
     @ExceptionHandler(ControlService.NotFoundException.class)
     public ResponseEntity<Map<String, Object>> notFound(ControlService.NotFoundException error) {
         return error(HttpStatus.NOT_FOUND, null, error.getMessage());
+    }
+
+    @ExceptionHandler(ScheduledTaskService.NotFoundException.class)
+    public ResponseEntity<Map<String, Object>> scheduledNotFound(
+            ScheduledTaskService.NotFoundException error) {
+        return error(HttpStatus.NOT_FOUND, null, error.getMessage());
+    }
+
+    @ExceptionHandler(ScheduledTaskService.ConflictException.class)
+    public ResponseEntity<Map<String, Object>> scheduledConflict(
+            ScheduledTaskService.ConflictException error) {
+        return error(HttpStatus.CONFLICT, "scheduled_state_conflict", error.getMessage());
+    }
+
+    @ExceptionHandler(ScheduledTaskService.DataCorruptionException.class)
+    public ResponseEntity<Map<String, Object>> scheduledDataCorruption() {
+        LOG.error("Stored scheduled result payload is invalid");
+        return error(HttpStatus.INTERNAL_SERVER_ERROR, null, "定时任务结果损坏");
     }
 
     @ExceptionHandler(ControlService.ActiveExecutionException.class)

@@ -1,5 +1,6 @@
 package com.union.control.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.union.control.controller.ApiExceptionHandler;
 import com.union.control.controller.LlmController;
 
@@ -33,6 +34,7 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 import static org.springframework.test.web.client.ExpectedCount.once;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
@@ -239,6 +241,56 @@ public class LlmControllerTest {
                 .andExpect(status().isOk());
         mvc.perform(post("/llm/behaviorRisk").contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isOk());
+        upstream.verify();
+    }
+
+    @Test
+    public void scheduledCallsUseTheUnifiedProxyWithSeparatedCredentials() {
+        AgentProxyService scheduledProxy = new AgentProxyService(
+                "http://py", "behavior-risk-token", "scheduled-token",
+                new ObjectMapper(), http, http);
+        upstream.expect(once(), requestTo(
+                "http://py/agent/v1/scenarios/scheduled-task-draft/runs"))
+                .andExpect(header(HttpHeaders.COOKIE, "CASSESSIONID=session-1"))
+                .andExpect(request -> assertNull(
+                        request.getHeaders().getFirst(HttpHeaders.AUTHORIZATION)))
+                .andRespond(withSuccess("{\"success\":true,\"data\":{}}", MediaType.APPLICATION_JSON));
+        upstream.expect(once(), requestTo(
+                "http://py/agent/v1/scenarios/scheduled-task/runs"))
+                .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer scheduled-token"))
+                .andExpect(request -> assertNull(request.getHeaders().getFirst(HttpHeaders.COOKIE)))
+                .andExpect(org.springframework.test.web.client.match.MockRestRequestMatchers
+                        .content().string("{\"runId\":7}"))
+                .andRespond(withSuccess(
+                        "{\"success\":true,\"data\":{\"content\":\"ok\"}}",
+                        MediaType.APPLICATION_JSON));
+
+        scheduledProxy.draftScheduledTask(
+                "CASSESSIONID=session-1", "{}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        assertEquals("ok", scheduledProxy.executeScheduledTask(7L).get("content"));
+
+        upstream.verify();
+    }
+
+    @Test
+    public void scheduledBusinessFailureIsNotRewrappedAsSuccess() {
+        AgentProxyService scheduledProxy = new AgentProxyService(
+                "http://py", "behavior-risk-token", "scheduled-token",
+                new ObjectMapper(), http, http);
+        upstream.expect(once(), requestTo(
+                "http://py/agent/v1/scenarios/scheduled-task-draft/runs"))
+                .andRespond(withSuccess(
+                        "{\"success\":false,\"errorMsg\":\"upstream detail\"}",
+                        MediaType.APPLICATION_JSON));
+
+        try {
+            scheduledProxy.draftScheduledTask(
+                    "CASSESSIONID=session-1",
+                    "{}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            fail("business failure must throw");
+        } catch (IllegalStateException error) {
+            assertEquals("py-app 业务请求失败", error.getMessage());
+        }
         upstream.verify();
     }
 

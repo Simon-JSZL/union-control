@@ -1,6 +1,6 @@
 {
   "name": "union-control",
-  "version": "1.0.2",
+  "version": "1.1.2",
   "description": "Spring entrypoint and persistence service for Union Agent",
   "files": [
     "deploy",
