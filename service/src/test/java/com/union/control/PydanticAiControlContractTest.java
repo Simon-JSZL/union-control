@@ -40,6 +40,7 @@ public class PydanticAiControlContractTest {
         @SuppressWarnings("unchecked") Map<String, Object> user = (Map<String, Object>)
                 service.userInfo().get("data");
         assertThat(user.get("userId")).isEqualTo(LocalCasRealm.USER_ID);
+        assertThat(user.get("orgCode")).isEqualTo(LocalCasRealm.ORG_CODE);
         assertThat(user).doesNotContainKey("memoryNamespace");
     }
 
@@ -63,6 +64,20 @@ public class PydanticAiControlContractTest {
                 "`role_id` VARCHAR(64) COLLATE utf8mb4_bin NOT NULL",
                 "`result_payload` LONGTEXT",
                 "`read_flag` TINYINT(1) NOT NULL DEFAULT 0");
+    }
+
+    @Test
+    public void scheduledRebuildMigrationMatchesTheCanonicalSchema() throws Exception {
+        String schema = source("src/main/resources/schema.sql");
+        String migration = source(
+                "deploy/sql/20260813_add_scheduled_execution_identity.sql");
+        String scheduledTables = schema.substring(schema.indexOf(
+                "CREATE TABLE IF NOT EXISTS `agent_scheduled_task`"));
+
+        assertThat(migration).contains(
+                "DROP TABLE IF EXISTS `agent_scheduled_task_run`;\n"
+                        + "DROP TABLE IF EXISTS `agent_scheduled_task`;")
+                .endsWith(scheduledTables);
     }
 
     @Test

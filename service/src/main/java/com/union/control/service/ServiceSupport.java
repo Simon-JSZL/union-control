@@ -14,11 +14,15 @@ final class ServiceSupport {
 
     private ServiceSupport() {}
 
-    static String currentUserId() {
+    static ShiroUser currentUser() {
         ShiroUser user = AuthContextHolder.getAuthUserDetails();
         if (user == null || user.getLoginName() == null || user.getLoginName().trim().isEmpty())
             throw new UnauthorizedException();
-        return user.getLoginName();
+        return user;
+    }
+
+    static String currentUserId() {
+        return currentUser().getLoginName();
     }
 
     static void requireId(String value) {

@@ -228,8 +228,11 @@ py-app versions.
 
 Roll out in this order:
 
-1. Apply `service/deploy/sql/20260813_add_scheduled_execution_identity.sql`, complete
-   authoritative `org_code` and `role_id` snapshot backfill, and leave scheduling disabled.
+1. Leave scheduling disabled and apply
+   `service/deploy/sql/20260813_add_scheduled_execution_identity.sql`. It drops
+   `agent_scheduled_task_run` first and `agent_scheduled_task` second, then
+   recreates both from the canonical schema. All pre-release task and run data
+   is intentionally discarded.
 2. Register the Control Scheduled Realm beside the existing production Realm,
    verify the existing Realm authorizes its restored `ShiroUser`, and deploy the
    py scheduled adapter while scheduling remains disabled.
@@ -242,13 +245,10 @@ Roll back in this order:
 
 1. Disable scheduling on every control instance and restart or drain them so
    no new run is claimed; allow or explicitly terminate in-flight work.
-2. Roll back the web UI, then control, then py-app. The additive tables can
-   remain in place and should be retained by default so task and run history is
-   recoverable.
-3. Only after all deployed versions no longer reference the feature and data
-   retention has been approved, drop `agent_scheduled_task_run` first and
-   `agent_scheduled_task` second because of the foreign key. Table removal is
-   destructive and is not part of a routine service rollback.
+2. Roll back the web UI, then control, then py-app. The scheduled-task tables
+   may remain in place.
+3. If the tables must be removed, drop `agent_scheduled_task_run` first and
+   `agent_scheduled_task` second because of the foreign key.
 
 ## Validation
 

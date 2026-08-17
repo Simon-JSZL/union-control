@@ -2,6 +2,7 @@ package com.union.control.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.epcc.arkweb.model.ShiroUser;
 import com.union.control.mapper.AgentExecutionMapper;
 import com.union.control.mapper.ConversationMapper;
 import org.springframework.dao.EmptyResultDataAccessException;
@@ -34,9 +35,10 @@ public class ConversationService {
     }
 
     public Map<String, Object> userInfo() {
-        String userId = currentUserId();
+        ShiroUser currentUser = currentUser();
         Map<String, Object> user = new LinkedHashMap<>();
-        user.put("userId", userId);
+        user.put("userId", currentUser.getLoginName());
+        user.put("orgCode", currentUser.getOrgCode());
         return ok(user);
     }
 

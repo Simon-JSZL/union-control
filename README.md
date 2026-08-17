@@ -75,9 +75,9 @@ The scheduler stores only the successful py-app result's `content` and
 `agentName` on the run; opening an unread run atomically creates the normal
 AG-UI conversation and messages.
 Existing databases must apply
-`service/deploy/sql/20260813_add_scheduled_execution_identity.sql`, perform the documented
-authoritative `org_code` and `role_id` backfill, and verify there are no missing
-snapshots.
+`service/deploy/sql/20260813_add_scheduled_execution_identity.sql`. The script
+drops both pre-release scheduled-task tables and recreates them from the current
+schema, so existing scheduled tasks and runs are intentionally discarded.
 Each occurrence receives a 256-bit, short-lived token while the database stores
 only its SHA-256 hash. Control calls py `/agent/v1/runs/scheduled` with only that
 token and `{}`; py introspects it through `/agent/scheduledExecutionIdentity` and
