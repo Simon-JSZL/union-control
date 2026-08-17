@@ -1,0 +1,13 @@
+/Users/simon/code/union-control/service/src/test/java/com/union/control/ShiroTestSupport.java
+/Users/simon/code/union-control/service/src/test/java/com/union/control/PydanticAiControlContractTest.java
+/Users/simon/code/union-control/service/src/test/java/com/union/control/service/ScheduledExecutionTokenTest.java
+/Users/simon/code/union-control/service/src/test/java/com/union/control/security/ScheduledExecutionFilterTest.java
+/Users/simon/code/union-control/service/src/test/java/com/union/control/security/ScheduledExecutionRealmTest.java
+/Users/simon/code/union-control/service/src/test/java/com/union/control/local/security/AgentAuthenticationFilterTest.java
+/Users/simon/code/union-control/service/src/test/java/com/union/control/sensitive/reveal/MaskedRevealHookTest.java
+/Users/simon/code/union-control/service/src/test/java/com/union/control/MemoryStoreServiceTest.java
+/Users/simon/code/union-control/service/src/test/java/com/union/control/sensitive/interceptor/SensitiveAesInterceptorTest.java
+/Users/simon/code/union-control/service/src/test/java/com/union/control/service/ScheduledTaskServiceTest.java
+/Users/simon/code/union-control/service/src/test/java/com/union/control/scheduled/ScheduledTaskSchedulerTest.java
+/Users/simon/code/union-control/service/src/test/java/com/union/control/ConversationServiceTest.java
+/Users/simon/code/union-control/service/src/test/java/com/union/control/AgentExecutionServiceTest.java

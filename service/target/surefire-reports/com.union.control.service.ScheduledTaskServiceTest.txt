@@ -1,0 +1,4 @@
+-------------------------------------------------------------------------------
+Test set: com.union.control.service.ScheduledTaskServiceTest
+-------------------------------------------------------------------------------
+Tests run: 24, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.028 sec - in com.union.control.service.ScheduledTaskServiceTest

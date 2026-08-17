@@ -1,0 +1,4 @@
+-------------------------------------------------------------------------------
+Test set: com.epcc.arkweb.web.sensitive.reveal.SensitiveRevealControllerTest
+-------------------------------------------------------------------------------
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.04 sec - in com.epcc.arkweb.web.sensitive.reveal.SensitiveRevealControllerTest

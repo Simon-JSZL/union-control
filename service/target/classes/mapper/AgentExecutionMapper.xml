@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.union.control.mapper.AgentExecutionMapper">
+
+    <update id="cleanupStaleExecutionChildren">
+        UPDATE ai_agent_execution e
+        JOIN ai_agent_execution r ON e.parent_execution_id=r.id
+        SET e.status='cancelled',
+            e.error_code=CASE WHEN r.status='cancel_requested' THEN 'cancel_timeout'
+                              ELSE 'execution_timeout' END,
+            e.finished_at=CURRENT_TIMESTAMP,e.updated_at=CURRENT_TIMESTAMP
+        WHERE r.parent_execution_id IS NULL
+          AND r.delete_flag=1 AND e.delete_flag=1
+          AND e.status IN ('running','cancel_requested')
+          AND ((r.status='running' AND r.created_at &lt; DATE_SUB(CURRENT_TIMESTAMP,INTERVAL #{executionMaxAgeSeconds} SECOND))
+            OR (r.status='cancel_requested' AND r.updated_at &lt; DATE_SUB(CURRENT_TIMESTAMP,INTERVAL #{cancelRequestMaxAgeSeconds} SECOND)))
+    </update>
+
+    <update id="cleanupStaleExecutionRoots">
+        UPDATE ai_agent_execution
+        SET status='cancelled',
+            error_code=CASE WHEN status='cancel_requested' THEN 'cancel_timeout'
+                            ELSE 'execution_timeout' END,
+            finished_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
+        WHERE parent_execution_id IS NULL AND delete_flag=1
+          AND ((status='running' AND created_at &lt; DATE_SUB(CURRENT_TIMESTAMP,INTERVAL #{executionMaxAgeSeconds} SECOND))
+            OR (status='cancel_requested' AND updated_at &lt; DATE_SUB(CURRENT_TIMESTAMP,INTERVAL #{cancelRequestMaxAgeSeconds} SECOND)))
+    </update>
+
+    <update id="softDeleteExecutions">
+        UPDATE ai_agent_execution
+        SET delete_flag=0,updated_at=CURRENT_TIMESTAMP
+        WHERE conversation_id=#{conversationId} AND user_id=#{userId} AND delete_flag=1
+    </update>
+
+    <insert id="insertRootExecution">
+        INSERT INTO ai_agent_execution
+            (run_id,conversation_id,user_id,parent_execution_id,agent_name,status,delete_flag)
+        VALUES (#{runId},#{conversationId},#{userId},NULL,'UnionCoordinatorAgent','running',1)
+    </insert>
+
+    <insert id="insertCompletedRootExecution" parameterType="map"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO ai_agent_execution
+            (run_id,conversation_id,user_id,parent_execution_id,agent_name,status,
+             finished_at,delete_flag,created_at,updated_at)
+        VALUES (#{runId},#{conversationId},#{userId},NULL,#{agentName},'completed',
+                CURRENT_TIMESTAMP,1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+    </insert>
+
+    <update id="updateChildrenStatus">
+        UPDATE ai_agent_execution
+        SET status=#{status},error_code=#{errorCode},
+            finished_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
+        WHERE parent_execution_id=#{parentExecutionId} AND delete_flag=1
+          AND status IN ('running','cancel_requested')
+    </update>
+
+    <update id="updateRootAgent">
+        UPDATE ai_agent_execution
+        SET agent_name=#{agentName},updated_at=CURRENT_TIMESTAMP
+        WHERE id=#{id} AND agent_name=#{currentAgentName}
+          AND status='running' AND delete_flag=1
+    </update>
+
+    <insert id="insertChildExecution">
+        INSERT INTO ai_agent_execution
+            (run_id,conversation_id,user_id,parent_execution_id,agent_name,
+             delegation_tool_call_id,task,status,delete_flag)
+        VALUES (#{runId},#{conversationId},#{userId},#{parentExecutionId},#{agentName},
+                #{delegationCallId},#{task},'running',1)
+    </insert>
+
+    <select id="findCurrentRoots" resultType="map">
+        SELECT e.id,e.run_id AS runId,e.conversation_id AS conversationId,
+               e.parent_execution_id AS parentExecutionId,p.run_id AS parentRunId,
+               e.agent_name AS agentName,e.delegation_tool_call_id AS delegationToolCallId,
+               e.task,e.status,e.error_code AS errorCode,
+               DATE_FORMAT(e.finished_at,'%Y-%m-%dT%H:%i:%s') AS finishedAt,
+               DATE_FORMAT(e.created_at,'%Y-%m-%dT%H:%i:%s') AS createdAt
+        FROM ai_agent_execution e
+        LEFT JOIN ai_agent_execution p ON p.id=e.parent_execution_id
+        WHERE e.user_id=#{userId} AND e.parent_execution_id IS NULL
+          AND e.status IN ('running','cancel_requested') AND e.delete_flag=1
+        LIMIT 1
+        <if test="lock">FOR UPDATE</if>
+    </select>
+
+    <select id="findExecutions" resultType="map">
+        SELECT e.id,e.run_id AS runId,e.conversation_id AS conversationId,
+               e.parent_execution_id AS parentExecutionId,p.run_id AS parentRunId,
+               e.agent_name AS agentName,e.delegation_tool_call_id AS delegationToolCallId,
+               e.task,e.status,e.error_code AS errorCode,
+               DATE_FORMAT(e.finished_at,'%Y-%m-%dT%H:%i:%s') AS finishedAt,
+               DATE_FORMAT(e.created_at,'%Y-%m-%dT%H:%i:%s') AS createdAt
+        FROM ai_agent_execution e
+        LEFT JOIN ai_agent_execution p ON p.id=e.parent_execution_id
+        WHERE e.user_id=#{userId} AND e.conversation_id=#{conversationId} AND e.delete_flag=1
+        ORDER BY e.created_at,e.id
+    </select>
+
+    <select id="findExecution" resultType="map">
+        SELECT e.id,e.run_id AS runId,e.conversation_id AS conversationId,
+               e.parent_execution_id AS parentExecutionId,p.run_id AS parentRunId,
+               e.agent_name AS agentName,e.delegation_tool_call_id AS delegationToolCallId,
+               e.task,e.status,e.error_code AS errorCode,
+               DATE_FORMAT(e.finished_at,'%Y-%m-%dT%H:%i:%s') AS finishedAt,
+               DATE_FORMAT(e.created_at,'%Y-%m-%dT%H:%i:%s') AS createdAt
+        FROM ai_agent_execution e
+        LEFT JOIN ai_agent_execution p ON p.id=e.parent_execution_id
+        WHERE e.user_id=#{userId} AND e.conversation_id=#{conversationId}
+          AND e.run_id=#{runId} AND e.delete_flag=1
+        <if test="lock">FOR UPDATE</if>
+    </select>
+
+    <update id="requestChildrenCancellation">
+        UPDATE ai_agent_execution
+        SET status='cancel_requested',error_code=COALESCE(error_code,#{reason}),
+            updated_at=CURRENT_TIMESTAMP
+        WHERE parent_execution_id=#{parentExecutionId}
+          AND status='running' AND delete_flag=1
+    </update>
+
+    <update id="requestRootCancellation">
+        UPDATE ai_agent_execution
+        SET status='cancel_requested',error_code=COALESCE(error_code,#{reason}),
+            updated_at=CURRENT_TIMESTAMP
+        WHERE id=#{id} AND status='running' AND delete_flag=1
+    </update>
+
+    <update id="finishExecution">
+        UPDATE ai_agent_execution
+        SET status=#{status},error_code=#{errorCode},
+            finished_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
+        WHERE id=#{id} AND delete_flag=1
+          AND status IN ('running','cancel_requested')
+    </update>
+</mapper>
+

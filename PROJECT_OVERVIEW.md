@@ -34,22 +34,22 @@ with this contract is technical debt to remove, not a precedent to copy.
   second browser route just to forward to the model, nor call a scenario-specific
   py-app route.
 - Domain job state and final result payload may remain in domain tables. Normal
-  conversation, execution, and message records must be created through shared
-  `ControlService` ownership rather than direct inserts from a domain mapper.
+  conversation, execution, and message records must be created through the
+  shared `ConversationService` and `AgentExecutionService` paths rather than
+  direct inserts from a domain mapper.
 
 ### Preserve one identity and tool path
 
-- The validated caller CAS cookie is the single user authorization context
-  forwarded to py-app and returned on all py-app-to-control tool calls. A
-  scenario service token may authenticate a truly user-independent fixed
-  system integration, but must never stand in for a user session or authorize
-  user-owned tools and data.
-- Background execution therefore requires an authentication-service-approved
-  delegated session or session exchange for the task owner. Persisting a raw
-  long-lived cookie, synthesizing a cookie from `userId`, or creating bearer-
-  authenticated copies of every tool endpoint is forbidden. Until the delegated
-  session mechanism exists, production background execution is blocked rather
-  than permitted to bypass the normal identity chain.
+- Interactive execution forwards the validated CAS cookie unchanged. Scheduled
+  execution uses a separate single-occurrence, short-lived, sessionless token;
+  Control stores only its SHA-256 hash and restores the task's trusted
+  `userId + orgCode + roleId` snapshot through Shiro on every request.
+- Scheduled traffic carries only `Authorization: Scheduled <token>`. It enters
+  py through `/agent/v1/runs/scheduled`, introspects via
+  `/agent/scheduledExecutionIdentity`, and returns the same token to existing
+  `/agent/*` tools. It never derives a Cookie, sends identity fields, or creates
+  Tool replicas. This is an authentication adapter around the same execution
+  kernel, not a second Agent execution plane.
 - Each business tool has one control endpoint and one authorization
   implementation. Scenario-prefixed clones are forbidden.
 
@@ -64,6 +64,12 @@ a second path in any category requires an explicit architecture decision
 recorded in this section before code is written. Tests must enforce reuse of the
 shared route and shared identity/tool path, and reviewers must reject violations
 even when isolated feature tests pass.
+
+Java sources follow the production project's responsibility-based packages:
+MyBatis interfaces in `mapper`, application services in `service`, timer
+entrypoints in `scheduled`, and additive Shiro components in `security`.
+Scheduled-task code must not introduce a parallel domain package containing its
+own mapper, service, Web facade, production-authentication wrapper, or local mock.
 
 ## Purpose
 
@@ -154,11 +160,15 @@ The scheduled-task flow is:
    truth for `PENDING` / `RUNNING` / terminal progress, so pause/start cannot
    enqueue the consumed occurrence again.
 2. Pending runs are moved to `RUNNING` and submitted to a bounded worker pool.
-   Control loads the prompt, owner, timezone, and effective occurrence time,
-   obtains a delegated CAS session for that owner, builds the existing sync
-   request contract, and invokes the same non-stream application service used by
-   `/llm/chatMessageSync`. py-app uses the normal cookie-authenticated `/agent/*`
-   tool routes.
+   Control loads the prompt, owner, role, timezone, and effective occurrence
+   time, atomically issues a token, and calls py's scheduled authentication
+   adapter with `{}`. The Scheduled Realm restores the trusted
+   `userId + orgCode + roleId` as the existing production `ShiroUser` shape.
+   The existing production Realm remains the only role-resource and
+   authorization owner; no permission-provider wrapper or permission snapshot
+   is added by this feature. Existing `@RequiresPermissions` annotations remain
+   the only mapping from a tool API to its page-level permission; py does not
+   perform a second permission decision.
 3. Every terminal run is unread until opened. Successful py-app content is
    stored as bounded JSON; failed runs retain only a fixed safe error. Neither
    creates a conversation in the background.
@@ -182,17 +192,16 @@ migrated or retained because the feature was not released.
 
 - Scheduled-task browser routes authenticate the caller's same-origin
   `CASSESSIONID`; the controller never substitutes a synthetic browser identity.
-  Local development validates the fixed session through the `LocalAuth` mock.
-  Production must replace that mock with the real authentication-service
+  Apache Shiro enforces `@RequiresPermissions("agent:execute")` on every
+  CAS-protected API. Local development maps the fixed session to that permission
+  through the `LocalCasRealm` development adapter.
+  Production must replace that adapter with the real authentication-service
   integration before enabling this feature.
 - Normal Agent, tool, history, completion, cancellation, sync, and Memory calls
   forward and validate that `CASSESSIONID`.
-- Fixed business scenarios share a generic Authorization-token mechanism.
-  Behavior risk currently uses `BEHAVIOR_RISK_TOKEN`.
-- Scheduled execution uses a delegated CAS session from the authentication
-  boundary. The scheduler is disabled by default and startup fails if it is
-  enabled without a configured delegated-session provider. The explicit local
-  adapter supports only the fixed `LocalAuth` mock user and is disabled by default.
+- Scheduled execution has no browser session and must not derive or fabricate a
+  CAS Cookie from the task owner. Its Shiro Subject is reconstructed from the
+  active RUNNING occurrence token without Session or Realm caches.
 - Conversation completion and cancellation validate user/conversation/run
   ownership.
 - Memory paths must begin with `<authenticated-user>/personal/`.
@@ -202,17 +211,16 @@ migrated or retained because the feature was not released.
 ## Scheduled-task configuration
 
 - `SCHEDULED_TASK_ENABLED` controls claiming and execution and defaults to
-  `false`. Control fails startup when it is `true` and no delegated-session
-  provider is configured.
-- `SCHEDULED_TASK_LOCAL_DELEGATED_SESSION_ENABLED` enables only the clearly
-  marked `LocalAuth` development adapter. It must remain disabled in production.
-- Scanner tuning: `SCHEDULED_TASK_INITIAL_DELAY_MS`,
-  `SCHEDULED_TASK_SCAN_INTERVAL_MS`, and `SCHEDULED_TASK_SCAN_BATCH_SIZE`.
-- Worker tuning: `SCHEDULED_TASK_WORKER_THREADS`,
-  `SCHEDULED_TASK_WORKER_QUEUE`, and `SCHEDULED_TASK_MAX_RUN_SECONDS`.
-- Contract limit: `SCHEDULED_TASK_MIN_INTERVAL_SECONDS`.
+  `false` until the existing production Realm accepts the restored scheduled
+  `ShiroUser`, the database migration and py scheduled adapter are deployed,
+  and cross-service security checks are complete.
+- Worker tuning: `SCHEDULED_TASK_WORKER_THREADS` and
+  `SCHEDULED_TASK_MAX_RUN_SECONDS`.
 
-Defaults are defined in `src/main/resources/application.yml`. Keep the
+The scanner runs every five seconds, claims at most 20 tasks per pass, queues
+at most 32 worker submissions, and rejects schedules more frequent than once
+per minute. These implementation limits are fixed in code. Configurable defaults
+are defined in `service/src/main/resources/application.yml`. Keep the
 scheduler disabled while deploying or rolling back incompatible control and
 py-app versions.
 
@@ -220,10 +228,11 @@ py-app versions.
 
 Roll out in this order:
 
-1. Apply `deploy/sql/20260810_add_agent_scheduled_tasks.sql`; it creates
-   `agent_scheduled_task` before its child `agent_scheduled_task_run`.
-2. Deploy the authentication-service delegated-session integration, control,
-   and py-app, and leave control scheduling disabled.
+1. Apply `service/deploy/sql/20260813_add_scheduled_execution_identity.sql`, complete
+   authoritative `org_code` and `role_id` snapshot backfill, and leave scheduling disabled.
+2. Register the Control Scheduled Realm beside the existing production Realm,
+   verify the existing Realm authorizes its restored `ShiroUser`, and deploy the
+   py scheduled adapter while scheduling remains disabled.
 3. Deploy the web UI and verify draft, create, update, list, pause/start, and result
    APIs while no background run can be claimed.
 4. Enable scheduling on control only after the cross-service contract and
