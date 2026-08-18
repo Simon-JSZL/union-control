@@ -51,42 +51,51 @@ public class AgentProxyService {
     }
 
     public int stream(String cookie, byte[] payload, HttpServletResponse response) {
-        return http.execute(
-                pyAppBaseUrl + "/agent/v1/runs",
-                HttpMethod.POST,
-                request -> {
-                    request.getHeaders().setContentType(MediaType.APPLICATION_JSON);
-                    request.getHeaders().setAccept(java.util.Collections.singletonList(MediaType.TEXT_EVENT_STREAM));
-                    request.getHeaders().set(HttpHeaders.COOKIE, cookie);
-                    StreamUtils.copy(payload, request.getBody());
-                },
-                upstream -> {
-                    int status = upstream.getRawStatusCode();
-                    response.setStatus(status);
-                    copyHeader(upstream, response, HttpHeaders.CONTENT_TYPE);
-                    copyHeader(upstream, response, HttpHeaders.CACHE_CONTROL);
-                    copyHeader(upstream, response, "X-Accel-Buffering");
-                    response.setHeader("X-Accel-Buffering", "no");
-                    InputStream input = upstream.getBody();
-                    OutputStream output = response.getOutputStream();
-                    byte[] buffer = new byte[4096];
-                    int read;
-                    while ((read = input.read(buffer)) != -1) {
-                        try {
-                            output.write(buffer, 0, read);
-                            output.flush();
-                        } catch (IOException error) {
-                throw new ClientDisconnectedException(error);
+        long startedAt = System.nanoTime();
+        logger.info("Agent call started mode=stream payload_bytes={}", payload.length);
+        try {
+            int status = http.execute(
+                    pyAppBaseUrl + "/agent/v1/runs",
+                    HttpMethod.POST,
+                    request -> {
+                        request.getHeaders().setContentType(MediaType.APPLICATION_JSON);
+                        request.getHeaders().setAccept(java.util.Collections.singletonList(MediaType.TEXT_EVENT_STREAM));
+                        request.getHeaders().set(HttpHeaders.COOKIE, cookie);
+                        StreamUtils.copy(payload, request.getBody());
+                    },
+                    upstream -> {
+                        int upstreamStatus = upstream.getRawStatusCode();
+                        response.setStatus(upstreamStatus);
+                        copyHeader(upstream, response, HttpHeaders.CONTENT_TYPE);
+                        copyHeader(upstream, response, HttpHeaders.CACHE_CONTROL);
+                        copyHeader(upstream, response, "X-Accel-Buffering");
+                        response.setHeader("X-Accel-Buffering", "no");
+                        InputStream input = upstream.getBody();
+                        OutputStream output = response.getOutputStream();
+                        byte[] buffer = new byte[4096];
+                        int read;
+                        while ((read = input.read(buffer)) != -1) {
+                            try {
+                                output.write(buffer, 0, read);
+                                output.flush();
+                            } catch (IOException error) {
+                                throw new ClientDisconnectedException(error);
+                            }
                         }
+                        try {
+                            response.flushBuffer();
+                        } catch (IOException error) {
+                            throw new ClientDisconnectedException(error);
+                        }
+                        return upstreamStatus;
                     }
-                    try {
-                        response.flushBuffer();
-                    } catch (IOException error) {
-                        throw new ClientDisconnectedException(error);
-                    }
-                    return status;
-                }
-        );
+            );
+            logCompleted("stream", status, startedAt);
+            return status;
+        } catch (RuntimeException error) {
+            logFailed("stream", startedAt, error);
+            throw error;
+        }
     }
 
     public ResponseEntity<byte[]> sync(String cookie, byte[] payload) {
@@ -95,29 +104,47 @@ public class AgentProxyService {
 
     public ResponseEntity<byte[]> sync(
             String cookie, byte[] payload, String effectiveAt, String effectiveTimezone) {
+        long startedAt = System.nanoTime();
+        logger.info("Agent call started mode=sync payload_bytes={}", payload.length);
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         headers.set(HttpHeaders.COOKIE, cookie);
         if (effectiveAt != null) headers.set("X-Agent-Effective-At", effectiveAt);
         if (effectiveTimezone != null)
             headers.set("X-Agent-Effective-Timezone", effectiveTimezone);
-        return http.exchange(
-                pyAppBaseUrl + "/agent/v1/runs/sync",
-                HttpMethod.POST,
-                new HttpEntity<>(payload, headers),
-                byte[].class
-        );
+        try {
+            ResponseEntity<byte[]> response = http.exchange(
+                    pyAppBaseUrl + "/agent/v1/runs/sync",
+                    HttpMethod.POST,
+                    new HttpEntity<>(payload, headers),
+                    byte[].class
+            );
+            logCompleted("sync", response.getStatusCode().value(), startedAt);
+            return response;
+        } catch (RuntimeException error) {
+            logFailed("sync", startedAt, error);
+            throw error;
+        }
     }
 
     public ResponseEntity<byte[]> scheduled(String authorization) {
+        long startedAt = System.nanoTime();
+        logger.info("Agent call started mode=scheduled");
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         headers.set(HttpHeaders.AUTHORIZATION, authorization);
-        return http.exchange(
-                pyAppBaseUrl + "/agent/v1/runs/scheduled",
-                HttpMethod.POST,
-                new HttpEntity<byte[]>(new byte[]{'{', '}'}, headers),
-                byte[].class);
+        try {
+            ResponseEntity<byte[]> response = http.exchange(
+                    pyAppBaseUrl + "/agent/v1/runs/scheduled",
+                    HttpMethod.POST,
+                    new HttpEntity<byte[]>(new byte[]{'{', '}'}, headers),
+                    byte[].class);
+            logCompleted("scheduled", response.getStatusCode().value(), startedAt);
+            return response;
+        } catch (RuntimeException error) {
+            logFailed("scheduled", startedAt, error);
+            throw error;
+        }
     }
 
     public void cancel(String cookie, String conversationId, String runId) {
@@ -144,6 +171,19 @@ public class AgentProxyService {
             throws IOException {
         String value = upstream.getHeaders().getFirst(name);
         if (value != null) response.setHeader(name, value);
+    }
+
+    private static void logCompleted(String mode, int status, long startedAt) {
+        long duration = (System.nanoTime() - startedAt) / 1_000_000L;
+        if (status >= 400)
+            logger.warn("Agent call completed mode={} status={} duration_ms={}", mode, status, duration);
+        else
+            logger.info("Agent call completed mode={} status={} duration_ms={}", mode, status, duration);
+    }
+
+    private static void logFailed(String mode, long startedAt, RuntimeException error) {
+        logger.warn("Agent call failed mode={} duration_ms={} error_type={}", mode,
+                (System.nanoTime() - startedAt) / 1_000_000L, error.getClass().getSimpleName());
     }
 
     public static class ClientDisconnectedException extends RuntimeException {

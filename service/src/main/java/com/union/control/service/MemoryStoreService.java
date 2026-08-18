@@ -1,5 +1,6 @@
 package com.union.control.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.union.control.mapper.MemoryStoreMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -10,7 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
 
-import static com.union.control.service.ServiceSupport.*;
+import static com.union.control.utils.ServiceSupport.*;
 
 @Service
 public class MemoryStoreService {
@@ -18,13 +19,16 @@ public class MemoryStoreService {
             Pattern.compile("[A-Za-z0-9._:@+-]+(?:/[A-Za-z0-9._:@+-]+)*");
 
     private final MemoryStoreMapper mapper;
+    private final ObjectMapper json;
 
-    public MemoryStoreService(MemoryStoreMapper mapper) {
+    public MemoryStoreService(MemoryStoreMapper mapper, ObjectMapper json) {
         this.mapper = mapper;
+        this.json = json;
     }
 
-    public Map<String, Object> memoryRead(Map<String, Object> payload) {
-        String userId = currentUserId();
+    public Map<String, Object> memoryRead(String input) {
+        Map<String, Object> payload = request(json, input);
+        String userId = userId(payload);
         String path = memoryPath(userId, payload, "path");
         int maxChars = integer(payload, "maxChars", 1, 65536);
         List<Map<String, Object>> rows = mapper.readMemory(userId, path);
@@ -44,8 +48,9 @@ public class MemoryStoreService {
         return response;
     }
 
-    public Map<String, Object> memoryList(Map<String, Object> payload) {
-        String userId = currentUserId();
+    public Map<String, Object> memoryList(String input) {
+        Map<String, Object> payload = request(json, input);
+        String userId = userId(payload);
         String prefix = memoryPrefix(userId, payload);
         int limit = integer(payload, "limit", 1, 1000);
         List<String> paths = mapper.listMemoryPaths(userId, likePrefix(prefix), limit);
@@ -54,8 +59,9 @@ public class MemoryStoreService {
         return response;
     }
 
-    public Map<String, Object> memoryOperation(Map<String, Object> payload) {
-        String userId = currentUserId();
+    public Map<String, Object> memoryOperation(String input) {
+        Map<String, Object> payload = request(json, input);
+        String userId = userId(payload);
         String operationId = text(payload, "operationId", 128, true);
         String fingerprint = text(payload, "fingerprint", 128, true);
         List<Map<String, Object>> rows = mapper.findMemoryOperation(userId, operationId, false);
@@ -68,8 +74,9 @@ public class MemoryStoreService {
     }
 
     @Transactional
-    public Map<String, Object> memoryWrite(Map<String, Object> payload) {
-        String userId = currentUserId();
+    public Map<String, Object> memoryWrite(String input) {
+        Map<String, Object> payload = request(json, input);
+        String userId = userId(payload);
         String path = memoryPath(userId, payload, "path");
         String content = text(payload, "content", 65536, true);
         String expected = optionalText(payload, "expectedVersion", 32);
@@ -97,8 +104,9 @@ public class MemoryStoreService {
     }
 
     @Transactional
-    public Map<String, Object> memoryDelete(Map<String, Object> payload) {
-        String userId = currentUserId();
+    public Map<String, Object> memoryDelete(String input) {
+        Map<String, Object> payload = request(json, input);
+        String userId = userId(payload);
         String path = memoryPath(userId, payload, "path");
         String expected = optionalText(payload, "expectedVersion", 32);
         Operation operation = operation(payload);
@@ -118,8 +126,9 @@ public class MemoryStoreService {
         return response;
     }
 
-    public Map<String, Object> memorySearch(Map<String, Object> payload) {
-        String userId = currentUserId();
+    public Map<String, Object> memorySearch(String input) {
+        Map<String, Object> payload = request(json, input);
+        String userId = userId(payload);
         String prefix = memoryPrefix(userId, payload);
         String query = text(payload, "query", 512, true);
         int limit = integer(payload, "limit", 1, 100);

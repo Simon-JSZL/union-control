@@ -1,7 +1,7 @@
 package com.union.control.service;
 
-import com.epcc.arkweb.helper.AuthContextHolder;
-import com.epcc.arkweb.model.ShiroUser;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.union.control.utils.ServiceSupport;
 
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
@@ -17,6 +17,7 @@ import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.LongConsumer;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 /** Local mock data used by union-py-app's typed running-analysis tools. */
@@ -31,17 +32,24 @@ public class RunningAnalysisMockService {
             new Org("103100000026", "中国农业银行", "农行", "ABC")
     );
     private final LongConsumer delay;
+    private final ObjectMapper json;
 
-    public RunningAnalysisMockService() {
-        this(RunningAnalysisMockService::sleep);
+    @Autowired
+    public RunningAnalysisMockService(ObjectMapper json) {
+        this(RunningAnalysisMockService::sleep, json);
     }
 
     public RunningAnalysisMockService(LongConsumer delay) {
-        this.delay = delay;
+        this(delay, new ObjectMapper());
     }
 
-    public Map<String, Object> getOrgInfo(String cookie, Map<String, Object> payload) {
-        requireTrustedAgentPrincipal();
+    RunningAnalysisMockService(LongConsumer delay, ObjectMapper json) {
+        this.delay = delay;
+        this.json = json;
+    }
+
+    public Map<String, Object> getOrgInfo(String input) {
+        Map<String, Object> payload = request(input);
         String query = requiredString(payload, "orgName").toLowerCase(Locale.ROOT);
         List<Map<String, Object>> rows = new ArrayList<>();
         for (Org org : ORGS) {
@@ -50,8 +58,8 @@ public class RunningAnalysisMockService {
         return ok(rows);
     }
 
-    public Map<String, Object> queryBigData(String cookie, Map<String, Object> payload) {
-        requireTrustedAgentPrincipal();
+    public Map<String, Object> queryBigData(String input) {
+        Map<String, Object> payload = request(input);
         String interfaceName = requiredString(payload, "interfaceName");
         Map<String, Object> params = requiredMap(payload, "params");
         List<String> days = days(params);
@@ -68,8 +76,8 @@ public class RunningAnalysisMockService {
         return ok(rows);
     }
 
-    public Map<String, Object> announceList(String cookie, Map<String, Object> payload) {
-        requireTrustedAgentPrincipal();
+    public Map<String, Object> announceList(String input) {
+        Map<String, Object> payload = request(input);
         String orgCode = requiredString(payload, "org_code");
         String startDate = validDate(requiredString(payload, "planned_start_time"));
         validDate(requiredString(payload, "planned_start_time_end"));
@@ -100,8 +108,8 @@ public class RunningAnalysisMockService {
         return ok(rows);
     }
 
-    public Map<String, Object> getJiraInfo(String cookie, Map<String, Object> payload) {
-        requireTrustedAgentPrincipal();
+    public Map<String, Object> getJiraInfo(String input) {
+        Map<String, Object> payload = request(input);
         String orgCode = requiredString(payload, "orgCode");
         String startDate = validDate(requiredString(payload, "startDate"));
         validDate(requiredString(payload, "endDate"));
@@ -246,10 +254,10 @@ public class RunningAnalysisMockService {
         return (Map<String, Object>) raw;
     }
 
-    private static void requireTrustedAgentPrincipal() {
-        ShiroUser user = AuthContextHolder.getAuthUserDetails();
-        if (user == null || user.getLoginName() == null || user.getLoginName().trim().isEmpty())
-            throw new ServiceExceptions.UnauthorizedException();
+    private Map<String, Object> request(String input) {
+        Map<String, Object> payload = ServiceSupport.request(json, input);
+        ServiceSupport.userId(payload);
+        return payload;
     }
 
     private static Map<String, Object> row(Object... values) {

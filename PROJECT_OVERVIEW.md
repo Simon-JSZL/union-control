@@ -7,6 +7,24 @@ feature iteration. New requirements must comply with it before lower sections,
 existing scenario code, or tests are considered. Existing code that conflicts
 with this contract is technical debt to remove, not a precedent to copy.
 
+### Web authentication and JSON-only service boundary
+
+- `ark-web-server` is the simulated browser-facing Web application and owns all
+  Shiro/CAS authentication, authorization annotations, identity models, filters,
+  realms, and scheduled-execution authentication adapters.
+- `service` is a trusted, non-public backend module. Business services must not
+  read Shiro subjects, cookies, thread-local authentication, or call helpers such
+  as `currentUserId()`. The module has no Shiro dependency.
+- After Web authentication succeeds, `AuthenticatedRequest` overwrites any
+  client-supplied `userId`, `orgCode`, and `roleId` with the authenticated values
+  and serializes the complete backend input as one JSON string.
+- User-facing business service methods accept that JSON string, parse and validate
+  it, then pass the parsed values to their mapper. Mapper ownership predicates
+  continue to use `userId`; the service trusts the Web boundary that supplied it.
+- Background scheduler mechanics that create or consume authentication credentials
+  live in `ark-web-server`. Backend-only scheduling state transitions may keep
+  typed internal method parameters because they are not public request inputs.
+
 ### One browser-to-Agent gateway
 
 - Domain controllers own browser and MySQL interactions for their domain. They
@@ -40,7 +58,8 @@ with this contract is technical debt to remove, not a precedent to copy.
 
 ### Preserve one identity and tool path
 
-- Interactive execution forwards the validated CAS cookie unchanged. Scheduled
+- The Web application authenticates interactive execution and forwards the
+  validated CAS cookie unchanged. Scheduled
   execution uses a separate single-occurrence, short-lived, sessionless token;
   Control stores only its SHA-256 hash and restores the task's trusted
   `userId + orgCode + roleId` snapshot through Shiro on every request.
@@ -67,14 +86,16 @@ even when isolated feature tests pass.
 
 Java sources follow the production project's responsibility-based packages:
 MyBatis interfaces in `mapper`, application services in `service`, timer
-entrypoints in `scheduled`, and additive Shiro components in `security`.
+entrypoints in `ark-web-server`'s `scheduled` package, and Shiro components in
+`ark-web-server`'s `security` and `local.security` packages.
 Scheduled-task code must not introduce a parallel domain package containing its
 own mapper, service, Web facade, production-authentication wrapper, or local mock.
 
 ## Purpose
 
-`union-control` is the browser-facing control plane for the PydanticAI service.
-It owns authenticated conversation/run state, standard AG-UI message
+`ark-web-server` is the browser-facing control plane for the PydanticAI service;
+`service` is its trusted mock backend. Together they own authenticated
+conversation/run state, standard AG-UI message
 persistence, the official Memory store protocol adapter, and transparent AG-UI
 SSE proxying.
 
@@ -190,6 +211,9 @@ migrated or retained because the feature was not released.
 
 ## Security
 
+- `ark-web-server` authenticates browser and Agent callers before creating the
+  JSON string passed to `service`; `service` performs no authentication or
+  permission decision of its own.
 - Scheduled-task browser routes authenticate the caller's same-origin
   `CASSESSIONID`; the controller never substitutes a synthetic browser identity.
   Apache Shiro enforces `@RequiresPermissions("agent:execute")` on every

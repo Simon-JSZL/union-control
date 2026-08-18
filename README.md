@@ -4,8 +4,8 @@ The repository mirrors the production Web layout and keeps unavailable local
 dependencies in a separate mock service:
 
 ```text
-ark-web-server/  production-shaped com.epcc.arkweb Web changes
-service/         local control/service, database and scheduler mocks
+ark-web-server/  Web controllers, authentication, authorization and scheduler
+service/         trusted JSON-input business services and database mappers
 ```
 
 The production scheduled-task changes follow the existing layered packages:
@@ -13,14 +13,15 @@ The production scheduled-task changes follow the existing layered packages:
 ```text
 service/src/main/java/com/union/control/mapper/ScheduledTaskMapper.java
 service/src/main/java/com/union/control/service/ScheduledTaskService.java
-service/src/main/java/com/union/control/scheduled/ScheduledTaskScheduler.java
-service/src/main/java/com/union/control/security/ScheduledExecution*.java
+ark-web-server/src/main/java/com/union/control/scheduled/ScheduledTaskScheduler.java
+ark-web-server/src/main/java/com/union/control/security/ScheduledExecution*.java
 ```
 
-The `scheduled` package contains only the timer entrypoint. Mapper, service and
-security code stay in their existing responsibility-based packages.
+The Web `scheduled` package contains only the timer entrypoint. Mapper and
+business service code remain in `service`; authentication code remains in Web.
 
-Local-only authentication mocks live under `service/src/main/java/com/union/control/local`.
+Local-only authentication mocks live under
+`ark-web-server/src/main/java/com/union/control/local`.
 Never copy that package, the local `com.epcc.arkweb` stand-ins, or the local
 `ShiroConfig` into production.
 The service module must not contain any Spring MVC controller.
@@ -30,17 +31,16 @@ the existing Ark Realm and place `ScheduledExecutionFilter` on `/agent/**`
 before the existing `authc` filter, with Shiro's `noSessionCreation` enabled for
 that Scheduled path. Do not replace either production CAS configuration.
 
-`ark-web-server` reuses the production Shiro subject through
-`AuthContextHolder`; it does not parse CAS cookies or contain a local Realm.
-The richer production `ShiroUser`, `AuthContextHolder` and `ResultMsg` already
-present in ark-web take precedence. Their local stand-ins are outside the
-production copy set. All browser/internal HTTP controllers, including
+`ark-web-server` resolves the Shiro subject through `AuthContextHolder`, replaces
+any client identity fields, and serializes the backend request through
+`AuthenticatedRequest`. Every user-facing business service accepts that one JSON
+string and never reads Shiro or a cookie. All browser/internal HTTP controllers, including
 `LlmController`, `AgentController` and `ScheduledTaskController`, live in
 `ark-web-server/src/main/java/com/epcc/arkweb/web/llm`. The scheduled controller
 uses the normal production service layer directly; no scheduled-package facade
 or local adapter is introduced.
 
-The following configuration belongs to the local `service` module.
+The following configuration is consumed by the assembled local application.
 
 Configuration:
 

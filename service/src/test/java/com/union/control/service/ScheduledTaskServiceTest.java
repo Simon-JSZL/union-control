@@ -1,11 +1,9 @@
 package com.union.control.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.union.control.local.security.LocalCasRealm;
+import com.union.control.TestJson;
 import com.union.control.mapper.ScheduledTaskMapper;
 import org.junit.Before;
-import org.junit.After;
-import com.union.control.ShiroTestSupport;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -36,25 +34,21 @@ import static org.mockito.Mockito.when;
 
 public class ScheduledTaskServiceTest {
     private ScheduledTaskMapper mapper;
-    private ScheduledTaskService service;
+    private JsonScheduledTaskService service;
     private ConversationService conversationService;
 
     @Before
     public void setUp() {
-        ShiroTestSupport.bindLocalUser();
         mapper = mock(ScheduledTaskMapper.class);
         conversationService = mock(ConversationService.class);
-        service = new ScheduledTaskService(
+        service = new JsonScheduledTaskService(
                 mapper, new ObjectMapper(), conversationService, 960, 930);
     }
-
-    @After
-    public void tearDown() { ShiroTestSupport.clear(); }
 
     @Test
     public void executionContextComesFromTheRunningDomainRun() {
         Map<String, Object> context = new LinkedHashMap<>();
-        context.put("userId", LocalCasRealm.USER_ID);
+        context.put("userId", TestJson.USER_ID);
         when(mapper.findRunContext(7L)).thenReturn(context);
         assertThat(service.executionContext(7L)).isSameAs(context);
     }
@@ -97,7 +91,7 @@ public class ScheduledTaskServiceTest {
 
     @Test
     public void createRejectsMoreThanOneHundredRunnableTasksPerUser() {
-        when(mapper.countRunnableTasks(LocalCasRealm.USER_ID)).thenReturn(100);
+        when(mapper.countRunnableTasks(TestJson.USER_ID)).thenReturn(100);
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("title", "超限任务");
         payload.put("prompt", "执行分析");
@@ -108,7 +102,7 @@ public class ScheduledTaskServiceTest {
         assertThatThrownBy(() -> service.create(payload))
                 .isInstanceOf(ScheduledTaskService.ConflictException.class)
                 .hasMessageContaining("100");
-        verify(mapper).lockUserTasks(LocalCasRealm.USER_ID);
+        verify(mapper).lockUserTasks(TestJson.USER_ID);
     }
 
     @Test
@@ -120,7 +114,7 @@ public class ScheduledTaskServiceTest {
             task.put("id", 7L);
             return 1;
         }).when(mapper).insertTask(org.mockito.Matchers.<Map<String, Object>>any());
-        when(mapper.findTaskDetail(7L, LocalCasRealm.USER_ID))
+        when(mapper.findTaskDetail(7L, TestJson.USER_ID))
                 .thenReturn(Collections.<String, Object>singletonMap("id", 7L));
 
         service.create(payload);
@@ -128,28 +122,16 @@ public class ScheduledTaskServiceTest {
         ArgumentCaptor<Map> inserted = ArgumentCaptor.forClass(Map.class);
         verify(mapper).insertTask(inserted.capture());
         assertThat(inserted.getValue())
-                .containsEntry("userId", LocalCasRealm.USER_ID)
-                .containsEntry("orgCode", LocalCasRealm.ORG_CODE)
-                .containsEntry("roleId", LocalCasRealm.ROLE_ID);
-    }
-
-    @Test
-    public void createRejectsRoleIdFromTheBrowser() {
-        Map<String, Object> payload = oncePayload();
-        payload.put("roleId", "attacker-selected-role");
-
-        assertThatThrownBy(() -> service.create(payload))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("roleId");
-
-        verify(mapper, never()).insertTask(org.mockito.Matchers.<Map<String, Object>>any());
+                .containsEntry("userId", TestJson.USER_ID)
+                .containsEntry("orgCode", TestJson.ORG_CODE)
+                .containsEntry("roleId", TestJson.ROLE_ID);
     }
 
     @Test
     public void updateValidatesAndPersistsOnlyTheOwnedTaskDefinition() {
         Map<String, Object> owned = new LinkedHashMap<>();
         owned.put("status", "ACTIVE");
-        when(mapper.findTaskOwner(7L, LocalCasRealm.USER_ID, true)).thenReturn(owned);
+        when(mapper.findTaskOwner(7L, TestJson.USER_ID, true)).thenReturn(owned);
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("taskId", 7L);
         payload.put("title", "新标题");
@@ -158,7 +140,7 @@ public class ScheduledTaskServiceTest {
         payload.put("runAt", "2099-08-12T15:00:00+08:00");
         payload.put("timezone", "Asia/Shanghai");
         when(mapper.updateTask(org.mockito.Matchers.<Map<String, Object>>any())).thenReturn(1);
-        when(mapper.findTaskDetail(7L, LocalCasRealm.USER_ID)).thenReturn(Collections.<String, Object>singletonMap("id", 7L));
+        when(mapper.findTaskDetail(7L, TestJson.USER_ID)).thenReturn(Collections.<String, Object>singletonMap("id", 7L));
 
         service.update(payload);
 
@@ -166,8 +148,8 @@ public class ScheduledTaskServiceTest {
         verify(mapper).updateTask(updated.capture());
         assertThat(updated.getValue())
                 .containsEntry("taskId", 7L)
-                .containsEntry("userId", LocalCasRealm.USER_ID)
-                .containsEntry("roleId", LocalCasRealm.ROLE_ID)
+                .containsEntry("userId", TestJson.USER_ID)
+                .containsEntry("roleId", TestJson.ROLE_ID)
                 .containsEntry("title", "新标题")
                 .containsEntry("prompt", "新的可信任务提示")
                 .containsEntry("scheduleType", "ONCE")
@@ -178,7 +160,7 @@ public class ScheduledTaskServiceTest {
     public void updateRejectsTasksNotOwnedByTheCallerBeforeWriting() {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("taskId", 7L);
-        when(mapper.findTaskOwner(7L, LocalCasRealm.USER_ID, true)).thenReturn(null);
+        when(mapper.findTaskOwner(7L, TestJson.USER_ID, true)).thenReturn(null);
 
         assertThatThrownBy(() -> service.update(payload))
                 .isInstanceOf(ScheduledTaskService.NotFoundException.class);
@@ -188,17 +170,17 @@ public class ScheduledTaskServiceTest {
 
     @Test
     public void runDetailScopesTheQueryToTheAuthenticatedOwner() {
-        when(mapper.findOwnedRun(7L, LocalCasRealm.USER_ID, false)).thenReturn(null);
+        when(mapper.findOwnedRun(7L, TestJson.USER_ID, false)).thenReturn(null);
         assertThatThrownBy(() -> service.runDetail(7))
                 .isInstanceOf(ScheduledTaskService.NotFoundException.class);
-        verify(mapper).findOwnedRun(7L, LocalCasRealm.USER_ID, false);
+        verify(mapper).findOwnedRun(7L, TestJson.USER_ID, false);
     }
 
     @Test
     public void runDetailSelectsAndReturnsTheStoredResultContent() {
         Map<String, Object> run = run("SUCCEEDED");
         run.put("resultPayload", "{\"content\":\"detail-only\"}");
-        when(mapper.findOwnedRun(7L, LocalCasRealm.USER_ID, false)).thenReturn(run);
+        when(mapper.findOwnedRun(7L, TestJson.USER_ID, false)).thenReturn(run);
 
         @SuppressWarnings("unchecked") Map<String, Object> data = (Map<String, Object>)
                 service.runDetail(7).get("data");
@@ -212,8 +194,8 @@ public class ScheduledTaskServiceTest {
         Map<String, Object> run = run("SUCCEEDED");
         run.put("readFlag", Boolean.FALSE);
         run.put("resultPayload", "{\"content\":\"must-not-be-listed\"}");
-        when(mapper.countUnread(LocalCasRealm.USER_ID)).thenReturn(1L);
-        when(mapper.findUnread(LocalCasRealm.USER_ID)).thenReturn(Collections.singletonList(run));
+        when(mapper.countUnread(TestJson.USER_ID)).thenReturn(1L);
+        when(mapper.findUnread(TestJson.USER_ID)).thenReturn(Collections.singletonList(run));
 
         @SuppressWarnings("unchecked") Map<String, Object> data = (Map<String, Object>)
                 service.unread().get("data");
@@ -223,18 +205,18 @@ public class ScheduledTaskServiceTest {
         assertThat(items).hasSize(1);
         assertThat(items.get(0).get("readFlag")).isEqualTo(false);
         assertThat(items.get(0)).doesNotContainKeys("resultPayload", "resultContent");
-        verify(mapper).findUnread(LocalCasRealm.USER_ID);
+        verify(mapper).findUnread(TestJson.USER_ID);
     }
 
     @Test
     public void runListDoesNotSelectOrExposeResultPayload() {
         Map<String, Object> task = new LinkedHashMap<>();
         task.put("id", 3L);
-        when(mapper.findTaskOwner(3L, LocalCasRealm.USER_ID, false)).thenReturn(task);
-        when(mapper.countRuns(3L, LocalCasRealm.USER_ID)).thenReturn(1L);
+        when(mapper.findTaskOwner(3L, TestJson.USER_ID, false)).thenReturn(task);
+        when(mapper.countRuns(3L, TestJson.USER_ID)).thenReturn(1L);
         Map<String, Object> run = run("SUCCEEDED");
         run.put("resultPayload", "{\"content\":\"must-not-be-listed\"}");
-        when(mapper.findRuns(3L, LocalCasRealm.USER_ID, 20, 0))
+        when(mapper.findRuns(3L, TestJson.USER_ID, 20, 0))
                 .thenReturn(Collections.singletonList(run));
 
         @SuppressWarnings("unchecked") Map<String, Object> data = (Map<String, Object>)
@@ -244,14 +226,14 @@ public class ScheduledTaskServiceTest {
 
         assertThat(items).hasSize(1);
         assertThat(items.get(0)).doesNotContainKeys("resultPayload", "resultContent");
-        verify(mapper).findRuns(3L, LocalCasRealm.USER_ID, 20, 0);
+        verify(mapper).findRuns(3L, TestJson.USER_ID, 20, 0);
     }
 
     @Test
     public void openingAnAlreadyMaterializedRunIsIdempotent() {
         Map<String, Object> run = run("SUCCEEDED");
         run.put("resultConversationId", "scheduled-7");
-        when(mapper.findOwnedRun(7L, LocalCasRealm.USER_ID, true)).thenReturn(run);
+        when(mapper.findOwnedRun(7L, TestJson.USER_ID, true)).thenReturn(run);
 
         @SuppressWarnings("unchecked") Map<String, Object> data = (Map<String, Object>)
                 service.open(7).get("data");
@@ -259,32 +241,32 @@ public class ScheduledTaskServiceTest {
         assertThat(data.get("conversationId")).isEqualTo("scheduled-7");
         verify(mapper).markRunRead(7L);
         verify(conversationService, never()).materializeCompletedConversation(
-                anyString(), anyString(), anyString(), anyString());
+                anyString(), anyString(), anyString(), anyString(), anyString());
     }
 
     @Test
     public void onlyTerminalRunsCanBeOpened() {
         for (String status : Arrays.asList("PENDING", "RUNNING")) {
-            when(mapper.findOwnedRun(7L, LocalCasRealm.USER_ID, true)).thenReturn(run(status));
+            when(mapper.findOwnedRun(7L, TestJson.USER_ID, true)).thenReturn(run(status));
 
             assertThatThrownBy(() -> service.open(7))
                     .isInstanceOf(ScheduledTaskService.ConflictException.class)
                     .hasMessageContaining("尚未结束");
         }
         verify(conversationService, never()).materializeCompletedConversation(
-                anyString(), anyString(), anyString(), anyString());
+                anyString(), anyString(), anyString(), anyString(), anyString());
     }
 
     @Test
     public void openingScopesTheLockedRunToTheAuthenticatedOwner() {
-        when(mapper.findOwnedRun(7L, LocalCasRealm.USER_ID, true)).thenReturn(null);
+        when(mapper.findOwnedRun(7L, TestJson.USER_ID, true)).thenReturn(null);
 
         assertThatThrownBy(() -> service.open(7))
                 .isInstanceOf(ScheduledTaskService.NotFoundException.class);
 
-        verify(mapper).findOwnedRun(7L, LocalCasRealm.USER_ID, true);
+        verify(mapper).findOwnedRun(7L, TestJson.USER_ID, true);
         verify(conversationService, never()).materializeCompletedConversation(
-                anyString(), anyString(), anyString(), anyString());
+                anyString(), anyString(), anyString(), anyString(), anyString());
     }
 
     @Test
@@ -293,16 +275,16 @@ public class ScheduledTaskServiceTest {
         run.put("title", "日报");
         run.put("prompt", "可信任务提示");
         run.put("resultPayload", new ObjectMapper().writeValueAsString(result()));
-        when(mapper.findOwnedRun(7L, LocalCasRealm.USER_ID, true)).thenReturn(run);
+        when(mapper.findOwnedRun(7L, TestJson.USER_ID, true)).thenReturn(run);
         when(conversationService.materializeCompletedConversation(anyString(), anyString(),
-                anyString(), anyString())).thenReturn("scheduled-7-shared");
+                anyString(), anyString(), anyString())).thenReturn("scheduled-7-shared");
 
         @SuppressWarnings("unchecked") Map<String, Object> data = (Map<String, Object>)
                 service.open(7).get("data");
 
         assertThat(data.get("conversationId")).isEqualTo("scheduled-7-shared");
         verify(conversationService).materializeCompletedConversation(
-                "日报", "可信任务提示", "日报内容", "ScheduledTaskAgent");
+                TestJson.USER_ID, "日报", "可信任务提示", "日报内容", "ScheduledTaskAgent");
         verify(mapper).attachConversation(7L, "scheduled-7-shared");
     }
 
@@ -312,14 +294,14 @@ public class ScheduledTaskServiceTest {
         run.put("title", "失败任务");
         run.put("prompt", "执行可信任务");
         run.put("errorMessage", "定时任务执行失败");
-        when(mapper.findOwnedRun(7L, LocalCasRealm.USER_ID, true)).thenReturn(run);
+        when(mapper.findOwnedRun(7L, TestJson.USER_ID, true)).thenReturn(run);
         when(conversationService.materializeCompletedConversation(anyString(), anyString(),
-                anyString(), anyString())).thenReturn("scheduled-7-failed");
+                anyString(), anyString(), anyString())).thenReturn("scheduled-7-failed");
 
         service.open(7);
 
         verify(conversationService).materializeCompletedConversation(
-                "失败任务", "执行可信任务", "定时任务执行失败", "ScheduledTaskAgent");
+                TestJson.USER_ID, "失败任务", "执行可信任务", "定时任务执行失败", "ScheduledTaskAgent");
         verify(mapper).attachConversation(7L, "scheduled-7-failed");
     }
 
@@ -437,4 +419,57 @@ public class ScheduledTaskServiceTest {
         result.put("messages", Arrays.asList(first, second));
         return result;
     }
+    private static final class JsonScheduledTaskService extends ScheduledTaskService {
+        JsonScheduledTaskService(ScheduledTaskMapper mapper, ObjectMapper json,
+                ConversationService conversations, int ignoredTtl, int ignoredMax) {
+            super(mapper, json, conversations);
+        }
+
+        Map<String, Object> create(Map<String, Object> value) {
+            return super.create(TestJson.request(value));
+        }
+
+        Map<String, Object> update(Map<String, Object> value) {
+            return super.update(TestJson.request(value));
+        }
+
+        Map<String, Object> list(String keyword, String status, int page, int pageSize) {
+            return super.list(TestJson.request("keyword", keyword, "status", status,
+                    "page", page, "pageSize", pageSize));
+        }
+
+        Map<String, Object> detail(long taskId) {
+            return super.detail(TestJson.request("taskId", taskId));
+        }
+
+        Map<String, Object> runs(long taskId, int page, int pageSize) {
+            return super.runs(TestJson.request("taskId", taskId, "page", page,
+                    "pageSize", pageSize));
+        }
+
+        Map<String, Object> runDetail(long runId) {
+            return super.runDetail(TestJson.request("runId", runId));
+        }
+
+        Map<String, Object> unread() {
+            return super.unread(TestJson.request());
+        }
+
+        Map<String, Object> start(long taskId) {
+            return super.start(TestJson.request("taskId", taskId));
+        }
+
+        Map<String, Object> pause(long taskId) {
+            return super.pause(TestJson.request("taskId", taskId));
+        }
+
+        Map<String, Object> discard(long taskId) {
+            return super.discard(TestJson.request("taskId", taskId));
+        }
+
+        Map<String, Object> open(long runId) {
+            return super.open(TestJson.request("runId", runId));
+        }
+    }
+
 }

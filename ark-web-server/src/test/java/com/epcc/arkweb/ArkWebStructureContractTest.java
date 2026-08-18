@@ -4,11 +4,11 @@ import org.junit.Test;
 import org.springframework.beans.factory.annotation.AutowiredAnnotationBeanPostProcessor;
 
 import com.epcc.arkweb.web.llm.AgentController;
+import com.epcc.arkweb.helper.AuthenticatedRequest;
 import com.union.control.service.AgentExecutionService;
 import com.union.control.service.ConversationService;
 import com.union.control.service.MemoryStoreService;
 import com.union.control.service.RunningAnalysisMockService;
-import com.union.control.service.ScheduledTaskService;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -58,7 +58,7 @@ public class ArkWebStructureContractTest {
         assertThat(constructors[0].getParameterTypes()).containsExactly(
                 ConversationService.class, AgentExecutionService.class,
                 MemoryStoreService.class, RunningAnalysisMockService.class,
-                ScheduledTaskService.class);
+                AuthenticatedRequest.class);
     }
 
     @Test
@@ -69,8 +69,8 @@ public class ArkWebStructureContractTest {
                 .contains("package com.epcc.arkweb.web.llm;")
                 .contains("@RequestMapping(value = {\"llm\", \"union-op/llm\"})")
                 .contains("@RequiresPermissions(value = \"/assistantManager/page\")")
-                .contains("AuthContextHolder.getAuthUserDetails()")
-                .contains("user.getLoginName()", "user.getOrgCode()", "user.getRoleId()")
+                .contains("AuthenticatedRequest")
+                .contains("request.json(")
                 .doesNotContain("@RequestHeader")
                 .doesNotContain("HttpHeaders.COOKIE")
                 .doesNotContain("CASSESSIONID")
@@ -79,8 +79,8 @@ public class ArkWebStructureContractTest {
     }
 
     @Test
-    public void productionModuleDoesNotOwnShiroOrServiceImplementations() throws Exception {
-        String all = Files.walk(ROOT)
+    public void authenticationLivesInWebAndNotInService() throws Exception {
+        String service = Files.walk(WORKSPACE.resolve("service/src/main/java"))
                 .filter(Files::isRegularFile)
                 .map(path -> {
                     try {
@@ -91,10 +91,13 @@ public class ArkWebStructureContractTest {
                 })
                 .collect(Collectors.joining("\n"));
 
-        assertThat(all).doesNotContain("extends AuthorizingRealm");
-        assertThat(all).doesNotContain("CASSESSIONID");
-        assertThat(all).doesNotContain("JdbcTemplate");
-        assertThat(all).doesNotContain("@Scheduled");
+        assertThat(service)
+                .doesNotContain("org.apache.shiro")
+                .doesNotContain("AuthContextHolder")
+                .doesNotContain("currentUserId()");
+        assertThat(ROOT.resolve("com/epcc/arkweb/helper/AuthenticatedRequest.java")).exists();
+        assertThat(ROOT.resolve("com/union/control/local/security/ShiroConfig.java")).exists();
+        assertThat(ROOT.resolve("com/union/control/security/ScheduledExecutionRealm.java")).exists();
     }
 
     @Test
@@ -110,7 +113,7 @@ public class ArkWebStructureContractTest {
     }
 
     @Test
-    public void webModuleContainsNoServiceImplementationOrScheduler() throws Exception {
+    public void webOwnsAuthenticationAndSchedulingButNotMappers() throws Exception {
         List<String> files = Files.walk(ROOT)
                 .filter(Files::isRegularFile)
                 .map(path -> path.getFileName().toString())
@@ -118,11 +121,9 @@ public class ArkWebStructureContractTest {
         assertThat(files).doesNotContain("ScheduledTaskServiceImpl.java");
         assertThat(files).doesNotContain("ApiExceptionHandler.java");
         assertThat(files).doesNotContain("ScheduledTaskMapper.java");
-        assertThat(files).doesNotContain("ScheduledTaskScheduler.java");
-        assertThat(files).doesNotContain("ScheduledExecutionRealm.java");
-        assertThat(files).doesNotContain("AuthContextHolder.java");
-        assertThat(files).doesNotContain("ShiroUser.java");
-        assertThat(files).doesNotContain("ResultMsg.java");
+        assertThat(files).contains(
+                "ScheduledTaskScheduler.java", "ScheduledExecutionRealm.java",
+                "AuthContextHolder.java", "ShiroUser.java", "ResultMsg.java");
     }
 
     private static String source(String relative) throws Exception {

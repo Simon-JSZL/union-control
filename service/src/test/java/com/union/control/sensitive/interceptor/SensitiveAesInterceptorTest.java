@@ -1,5 +1,7 @@
 package com.union.control.sensitive.interceptor;
 
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.union.control.sensitive.demo.SensitiveDemoRecord;
 import org.apache.ibatis.executor.Executor;
 import org.apache.ibatis.mapping.MappedStatement;
@@ -10,6 +12,7 @@ import org.apache.ibatis.session.Configuration;
 import org.apache.ibatis.session.ResultHandler;
 import org.apache.ibatis.session.RowBounds;
 import org.junit.Test;
+import org.slf4j.LoggerFactory;
 import org.mockito.invocation.InvocationOnMock;
 import org.mockito.stubbing.Answer;
 
@@ -18,8 +21,11 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 import static org.junit.Assert.assertEquals;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Matchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -75,6 +81,53 @@ public class SensitiveAesInterceptorTest {
         assertEquals("user-1", hook.userId);
         assertEquals("encrypted:13800138000", hook.ciphertext);
         assertEquals("13800138000", hook.plaintext);
+    }
+
+    @Test
+    public void logsDecryptFailureMetadataWithoutSensitiveValues() throws Throwable {
+        SensitiveCrypto crypto = new SensitiveCrypto() {
+            @Override
+            public String encrypt(String plaintext) {
+                return plaintext;
+            }
+
+            @Override
+            public String decrypt(String ciphertext) {
+                throw new IllegalStateException("decrypt failed");
+            }
+        };
+        SensitiveAesInterceptor interceptor = new SensitiveAesInterceptor(crypto, new RecordingHook());
+        SensitiveDemoRecord record = new SensitiveDemoRecord();
+        record.setId(7L);
+        record.setContent("ciphertext-secret");
+        Executor executor = mock(Executor.class);
+        when(executor.query(any(MappedStatement.class), any(), any(RowBounds.class), any(ResultHandler.class)))
+                .thenReturn((List) Collections.singletonList(record));
+        Map<String, Object> parameters = new HashMap<>();
+        parameters.put("userId", "user-secret");
+        ListAppender<ILoggingEvent> logs = logs();
+
+        assertThatThrownBy(() -> interceptor.intercept(invocation(executor, "query",
+                new Class<?>[]{MappedStatement.class, Object.class, RowBounds.class, ResultHandler.class},
+                statement(SensitiveAesInterceptor.LIST_STATEMENT, SqlCommandType.SELECT), parameters,
+                RowBounds.DEFAULT, null)))
+                .isInstanceOf(SensitiveAesInterceptor.DecryptionException.class);
+
+        String messages = logs.list.stream()
+                .map(ILoggingEvent::getFormattedMessage)
+                .collect(Collectors.joining("\n"));
+        assertThat(messages).contains("Sensitive field decryption failed record_id=7 error_type=IllegalStateException")
+                .doesNotContain("ciphertext-secret")
+                .doesNotContain("user-secret");
+    }
+
+    private static ListAppender<ILoggingEvent> logs() {
+        ch.qos.logback.classic.Logger logger = (ch.qos.logback.classic.Logger)
+                LoggerFactory.getLogger(SensitiveAesInterceptor.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        return appender;
     }
 
     private static Invocation invocation(Object target, String method, Class<?>[] types, Object... args)

@@ -2,7 +2,6 @@ package com.union.control.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.epcc.arkweb.model.ShiroUser;
 import com.union.control.mapper.AgentExecutionMapper;
 import com.union.control.mapper.ConversationMapper;
 import org.springframework.dao.EmptyResultDataAccessException;
@@ -13,11 +12,10 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.UUID;
 
-import static com.union.control.service.ServiceExceptions.DataCorruptionException;
-import static com.union.control.service.ServiceExceptions.NotFoundException;
-import static com.union.control.service.ServiceSupport.*;
+import static com.union.control.utils.ServiceSupport.*;
 
 @Service
 public class ConversationService {
@@ -34,22 +32,26 @@ public class ConversationService {
         this.json = json;
     }
 
-    public Map<String, Object> userInfo() {
-        ShiroUser currentUser = currentUser();
+    public Map<String, Object> userInfo(String input) {
+        Map<String, Object> request = request(json, input);
         Map<String, Object> user = new LinkedHashMap<>();
-        user.put("userId", currentUser.getLoginName());
-        user.put("orgCode", currentUser.getOrgCode());
+        user.put("userId", userId(request));
+        user.put("orgCode", identity(request, "orgCode"));
         return ok(user);
     }
 
-    public Map<String, Object> conversations(int limit) {
-        String userId = currentUserId();
+    public Map<String, Object> conversations(String input) {
+        Map<String, Object> request = request(json, input);
+        String userId = userId(request);
+        int limit = integer(request, "limit", 1, 100);
         requireRange(limit, 1, 100, "limit");
         return ok(conversationMapper.findConversations(userId, limit));
     }
 
-    public Map<String, Object> conversation(String conversationId) {
-        String userId = currentUserId();
+    public Map<String, Object> conversation(String input) {
+        Map<String, Object> request = request(json, input);
+        String userId = userId(request);
+        String conversationId = text(request, "conversationId", 64, true);
         requireId(conversationId);
         Map<String, Object> result = loadConversation(userId, conversationId);
         result.put("messages", loadBrowserMessages(userId, conversationId));
@@ -57,9 +59,9 @@ public class ConversationService {
         return ok(result);
     }
 
-    public Map<String, Object> conversationMessages(
-            Map<String, Object> payload) {
-        String userId = currentUserId();
+    public Map<String, Object> conversationMessages(String input) {
+        Map<String, Object> payload = request(json, input);
+        String userId = userId(payload);
         String conversationId = text(payload, "conversationId", 64, true);
         requireId(conversationId);
         requireOwned(userId, conversationId, false);
@@ -69,34 +71,35 @@ public class ConversationService {
         return response;
     }
 
-    public Map<String, Object> rename(Map<String, Object> payload) {
-        String userId = currentUserId();
+    public Map<String, Object> rename(String input) {
+        Map<String, Object> payload = request(json, input);
+        String userId = userId(payload);
         String conversationId = text(payload, "conversationId", 64, true);
         String title = text(payload, "title", 255, true);
         requireId(conversationId);
         if (conversationMapper.updateConversationTitle(title, conversationId, userId) != 1)
-            throw new NotFoundException("会话不存在");
+            throw new NoSuchElementException("会话不存在");
         return ok(loadConversation(userId, conversationId));
     }
 
     @Transactional
-    public Map<String, Object> deleteConversation(Map<String, Object> payload) {
-        String userId = currentUserId();
+    public Map<String, Object> deleteConversation(String input) {
+        Map<String, Object> payload = request(json, input);
+        String userId = userId(payload);
         String conversationId = text(payload, "conversationId", 64, true);
         requireId(conversationId);
         requireOwned(userId, conversationId, true);
         conversationMapper.softDeleteMessages(conversationId, userId);
         executionMapper.softDeleteExecutions(conversationId, userId);
         int updated = conversationMapper.softDeleteConversation(conversationId, userId);
-        if (updated != 1) throw new NotFoundException("会话不存在");
+        if (updated != 1) throw new NoSuchElementException("会话不存在");
         return ok(null);
     }
 
     /** Materializes a trusted completed result through the normal conversation path. */
     @Transactional
-    public String materializeCompletedConversation(
-            String title, String prompt, String content, String agentName) {
-        String userId = currentUserId();
+    String materializeCompletedConversation(
+            String userId, String title, String prompt, String content, String agentName) {
         String random = UUID.randomUUID().toString().replace("-", "");
         String conversationId = "scheduled-" + random;
         String runId = "scheduled-open-" + random;
@@ -172,7 +175,7 @@ public class ConversationService {
         try {
             Object parsed = json.readValue(String.valueOf(row.get("payload")),
                     new TypeReference<Object>() {});
-            if (!(parsed instanceof Map)) throw new DataCorruptionException();
+            if (!(parsed instanceof Map)) throw new IllegalStateException("消息数据损坏");
             Map<String, Object> message = new LinkedHashMap<>();
             message.put("id", row.get("messageId"));
             message.put("role", row.get("role"));
@@ -180,16 +183,16 @@ public class ConversationService {
                     (Map<String, Object>) parsed;
             message.putAll(payload);
             return message;
-        } catch (DataCorruptionException error) {
+        } catch (IllegalStateException error) {
             throw error;
         } catch (Exception error) {
-            throw new DataCorruptionException();
+            throw new IllegalStateException("消息数据损坏", error);
         }
     }
 
     private static Map<String, Object> activity(
             Map<String, Object> execution, List<Object> messages) {
-        if (execution == null) throw new DataCorruptionException();
+        if (execution == null) throw new IllegalStateException("execution 数据损坏");
         Map<String, Object> content = new LinkedHashMap<>();
         content.put("runId", execution.get("runId"));
         content.put("parentRunId", execution.get("parentRunId"));
@@ -211,10 +214,10 @@ public class ConversationService {
         try {
             Map<String, Object> conversation =
                     conversationMapper.findConversation(userId, conversationId);
-            if (conversation == null) throw new NotFoundException("会话不存在");
+            if (conversation == null) throw new NoSuchElementException("会话不存在");
             return conversation;
         } catch (EmptyResultDataAccessException error) {
-            throw new NotFoundException("会话不存在");
+            throw new NoSuchElementException("会话不存在");
         }
     }
 
@@ -241,7 +244,7 @@ public class ConversationService {
         try {
             conversationMapper.requireOwned(conversationId, userId, lock);
         } catch (EmptyResultDataAccessException error) {
-            throw new NotFoundException("会话不存在");
+            throw new NoSuchElementException("会话不存在");
         }
     }
 }

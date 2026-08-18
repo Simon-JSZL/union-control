@@ -10,6 +10,8 @@ import org.apache.ibatis.plugin.Plugin;
 import org.apache.ibatis.plugin.Signature;
 import org.apache.ibatis.session.ResultHandler;
 import org.apache.ibatis.session.RowBounds;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -29,6 +31,7 @@ import java.util.Properties;
                 args = {MappedStatement.class, Object.class, RowBounds.class, ResultHandler.class})
 })
 public class SensitiveAesInterceptor implements Interceptor {
+    private static final Logger LOG = LoggerFactory.getLogger(SensitiveAesInterceptor.class);
     public static final String INSERT_STATEMENT =
             "com.union.control.sensitive.demo.SensitiveDemoMapper.insert";
     public static final String LIST_STATEMENT =
@@ -82,6 +85,8 @@ public class SensitiveAesInterceptor implements Interceptor {
             try {
                 plaintext = crypto.decrypt(ciphertext);
             } catch (RuntimeException error) {
+                LOG.warn("Sensitive field decryption failed record_id={} error_type={}",
+                        source.getId(), error.getClass().getSimpleName());
                 throw new DecryptionException();
             }
             rewritten.add(copy);
@@ -91,6 +96,8 @@ public class SensitiveAesInterceptor implements Interceptor {
         List<String> displayValues = decryptedValueHook.afterDecrypt(userId, decrypted);
         if (displayValues.size() != records.size()) throw new IllegalStateException("Invalid decrypt hook result");
         for (int i = 0; i < records.size(); i++) records.get(i).setContent(displayValues.get(i));
+        if (!records.isEmpty())
+            LOG.info("Sensitive field decryption completed record_count={}", records.size());
         return rewritten;
     }
 

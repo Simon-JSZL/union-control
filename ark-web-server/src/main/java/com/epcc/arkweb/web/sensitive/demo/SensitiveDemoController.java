@@ -1,6 +1,7 @@
 package com.epcc.arkweb.web.sensitive.demo;
 
 import com.union.control.sensitive.demo.SensitiveDemoService;
+import com.epcc.arkweb.helper.AuthenticatedRequest;
 
 import org.apache.shiro.authz.annotation.RequiresPermissions;
 import org.springframework.http.CacheControl;
@@ -20,21 +21,23 @@ import java.util.Map;
 @RequiresPermissions("agent:execute")
 public class SensitiveDemoController {
     private final SensitiveDemoService service;
+    private final AuthenticatedRequest request;
 
-    public SensitiveDemoController(SensitiveDemoService service) {
+    public SensitiveDemoController(SensitiveDemoService service, AuthenticatedRequest request) {
         this.service = service;
+        this.request = request;
     }
 
     @PostMapping
     public Map<String, Object> create(
             @RequestHeader(value = HttpHeaders.COOKIE, required = false) String cookie,
             @RequestBody Map<String, Object> payload) {
-        return service.create(cookie, payload);
+        return service.create(request.json(payload));
     }
 
     @GetMapping
     public ResponseEntity<Map<String, Object>> list(
             @RequestHeader(value = HttpHeaders.COOKIE, required = false) String cookie) {
-        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(service.list(cookie));
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(service.list(request.json()));
     }
 }

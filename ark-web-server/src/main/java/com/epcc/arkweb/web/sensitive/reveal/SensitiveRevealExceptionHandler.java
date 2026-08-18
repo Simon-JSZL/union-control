@@ -4,7 +4,6 @@ import com.epcc.arkweb.web.sensitive.demo.SensitiveDemoController;
 import com.union.control.sensitive.interceptor.SensitiveAesInterceptor;
 import com.union.control.sensitive.reveal.SensitiveRevealService;
 import com.union.control.sensitive.reveal.StoreUnavailableException;
-import com.union.control.service.ServiceExceptions;
 import org.apache.shiro.authz.AuthorizationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,11 +20,6 @@ import java.util.UUID;
 @ControllerAdvice(assignableTypes = {SensitiveDemoController.class, SensitiveRevealController.class})
 public class SensitiveRevealExceptionHandler {
     private static final Logger LOG = LoggerFactory.getLogger(SensitiveRevealExceptionHandler.class);
-
-    @ExceptionHandler(ServiceExceptions.UnauthorizedException.class)
-    public ResponseEntity<Map<String, String>> unauthorized() {
-        return error(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "缺少或无效登录会话");
-    }
 
     @ExceptionHandler(AuthorizationException.class)
     public ResponseEntity<Map<String, String>> forbidden(AuthorizationException error) {
@@ -54,7 +48,6 @@ public class SensitiveRevealExceptionHandler {
     @ExceptionHandler({SensitiveRevealService.DecryptionException.class,
             SensitiveAesInterceptor.DecryptionException.class})
     public ResponseEntity<Map<String, String>> decryptionFailed() {
-        LOG.error("Sensitive decryption failed, requestId={}", UUID.randomUUID());
         return error(HttpStatus.INTERNAL_SERVER_ERROR, "SENSITIVE_DECRYPT_FAILED", "敏感数据解密失败");
     }
 

@@ -1,15 +1,12 @@
 package com.union.control;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.union.control.local.security.LocalCasRealm;
 import com.union.control.mapper.AgentExecutionMapper;
 import com.union.control.mapper.ConversationMapper;
 import com.union.control.service.AgentExecutionService;
-import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -30,14 +27,10 @@ public class AgentExecutionServiceTest {
 
     @Before
     public void setUp() {
-        ShiroTestSupport.bindLocalUser();
         executions = mock(AgentExecutionMapper.class);
         conversations = mock(ConversationMapper.class);
         service = new AgentExecutionService(executions, conversations, new ObjectMapper());
     }
-
-    @After
-    public void tearDown() { ShiroTestSupport.clear(); }
 
     @Test
     public void aguiRunRejectsFrontendToolsBeforePersistence() {
@@ -46,7 +39,7 @@ public class AgentExecutionServiceTest {
                 "\"state\":{},\"context\":[],\"forwardedProps\":{}," +
                 "\"tools\":[{\"name\":\"unsafe\"}]}";
 
-        assertThatThrownBy(() -> service.claimAguiRun(body.getBytes(StandardCharsets.UTF_8)))
+        assertThatThrownBy(() -> service.claimAguiRun(TestJson.request(body)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("frontend tools");
     }
@@ -56,22 +49,22 @@ public class AgentExecutionServiceTest {
         String body = "{\"threadId\":\"thread-1\",\"runId\":\"run-1\"," +
                 "\"messages\":[{\"id\":\"m1\",\"role\":\"user\",\"content\":\"hello\"}]," +
                 "\"state\":{},\"context\":[],\"forwardedProps\":{},\"tools\":[]}";
-        when(executions.findCurrentRoots(LocalCasRealm.USER_ID, false))
+        when(executions.findCurrentRoots(TestJson.USER_ID, false))
                 .thenReturn(Collections.<Map<String, Object>>emptyList());
-        when(conversations.requireOwnedActive("thread-1", LocalCasRealm.USER_ID)).thenReturn(1L);
-        when(executions.findExecution(LocalCasRealm.USER_ID, "thread-1", "run-1", false))
+        when(conversations.requireOwnedActive("thread-1", TestJson.USER_ID)).thenReturn(1L);
+        when(executions.findExecution(TestJson.USER_ID, "thread-1", "run-1", false))
                 .thenReturn(Collections.singletonList(root("running", null)));
 
-        service.claimAguiRun(body.getBytes(StandardCharsets.UTF_8));
+        service.claimAguiRun(TestJson.request(body));
 
-        verify(executions).findCurrentRoots(LocalCasRealm.USER_ID, false);
+        verify(executions).findCurrentRoots(TestJson.USER_ID, false);
         verify(executions, never()).findExecutions(
                 org.mockito.Matchers.anyString(), org.mockito.Matchers.anyString());
     }
 
     @Test
     public void cancellationWinsOverACompletedRunCallback() {
-        when(executions.findExecution(LocalCasRealm.USER_ID, "thread-1", "run-1", true))
+        when(executions.findExecution(TestJson.USER_ID, "thread-1", "run-1", true))
                 .thenReturn(Collections.singletonList(root("cancel_requested", "user_cancelled")));
         when(executions.finishExecution(7L, "cancelled", "user_cancelled")).thenReturn(1);
         Map<String, Object> payload = new LinkedHashMap<>();
@@ -79,7 +72,7 @@ public class AgentExecutionServiceTest {
         payload.put("runId", "run-1");
         payload.put("status", "completed");
 
-        service.completeRun(payload);
+        service.completeRun(TestJson.request(payload));
 
         verify(executions).updateChildrenStatus(7L, "cancelled", "user_cancelled");
         verify(executions).finishExecution(7L, "cancelled", "user_cancelled");

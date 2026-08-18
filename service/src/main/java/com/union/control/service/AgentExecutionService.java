@@ -1,6 +1,5 @@
 package com.union.control.service;
 
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.union.control.mapper.AgentExecutionMapper;
 import com.union.control.mapper.ConversationMapper;
@@ -21,18 +20,16 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.Set;
 
-import static com.union.control.service.ServiceExceptions.ActiveExecutionException;
-import static com.union.control.service.ServiceExceptions.NotFoundException;
-import static com.union.control.service.ServiceExceptions.StaleExecutionException;
-import static com.union.control.service.ServiceSupport.*;
+import static com.union.control.utils.ServiceSupport.*;
 
 @Service
 public class AgentExecutionService {
     private static final List<String> CLIENT_CONFIG_FIELDS = Arrays.asList(
             "agent", "agentName", "skill", "skillId", "memoryNamespace",
-            "model", "provider", "userId");
+            "model", "provider");
     private static final Set<String> EXECUTION_STATUSES = new HashSet<>(Arrays.asList(
             "running", "cancel_requested", "completed", "failed", "cancelled"));
     private static final Set<String> TERMINAL_STATUSES = new HashSet<>(Arrays.asList(
@@ -70,9 +67,9 @@ public class AgentExecutionService {
     }
 
     @Transactional(isolation = Isolation.READ_COMMITTED)
-    public Map<String, Object> claimAguiRun(byte[] payload) {
-        String userId = currentUserId();
-        Map<String, Object> input = parseObject(payload, "AG-UI 请求");
+    public Map<String, Object> claimAguiRun(String payload) {
+        Map<String, Object> input = request(json, payload);
+        String userId = userId(input);
         String conversationId = text(input, "threadId", 64, true);
         String runId = text(input, "runId", 64, true);
         requireId(conversationId);
@@ -80,7 +77,7 @@ public class AgentExecutionService {
         String title = validateAguiInput(input);
         cleanupStaleExecutions();
         Map<String, Object> active = loadCurrentRoot(userId, false);
-        if (active != null) throw new ActiveExecutionException();
+        if (active != null) throw new IllegalStateException("存在进行中的 execution");
         try {
             conversationMapper.insertConversation(conversationId, userId, title);
         } catch (DuplicateKeyException ignored) {
@@ -91,24 +88,20 @@ public class AgentExecutionService {
             executionMapper.insertRootExecution(runId, conversationId, userId);
         } catch (DuplicateKeyException error) {
             active = loadCurrentRoot(userId, false);
-            if (active != null) throw new ActiveExecutionException();
+            if (active != null) throw new IllegalStateException("存在进行中的 execution");
             throw error;
         }
         return ok(loadExecution(userId, conversationId, runId, false));
     }
 
     @Transactional
-    public Map<String, Object> cancelExecution(
-            Map<String, Object> payload) {
+    public Map<String, Object> cancelExecution(String input) {
+        Map<String, Object> payload = request(json, input);
+        String userId = userId(payload);
         String conversationId = text(payload, "conversationId", 64, true);
         String runId = text(payload, "runId", 64, true);
-        return cancelExecution(conversationId, runId, "cancelled");
-    }
-
-    @Transactional
-    public Map<String, Object> cancelExecution(
-            String conversationId, String runId, String reason) {
-        String userId = currentUserId();
+        String reason = optionalText(payload, "reason", 64);
+        if (reason == null) reason = "cancelled";
         Map<String, Object> root = loadExecution(
                 userId, conversationId, runId, true);
         if (root.get("parentExecutionId") != null)
@@ -119,9 +112,12 @@ public class AgentExecutionService {
     }
 
     @Transactional
-    public void failExecution(
-            String conversationId, String runId, String errorCode) {
-        String userId = currentUserId();
+    public void failExecution(String input) {
+        Map<String, Object> payload = request(json, input);
+        String userId = userId(payload);
+        String conversationId = text(payload, "conversationId", 64, true);
+        String runId = text(payload, "runId", 64, true);
+        String errorCode = text(payload, "errorCode", 64, true);
         Map<String, Object> root = loadExecution(
                 userId, conversationId, runId, true);
         if (root.get("parentExecutionId") != null)
@@ -137,9 +133,9 @@ public class AgentExecutionService {
     }
 
     @Transactional
-    public Map<String, Object> rootExecutionSelected(
-            Map<String, Object> payload) {
-        String userId = currentUserId();
+    public Map<String, Object> rootExecutionSelected(String input) {
+        Map<String, Object> payload = request(json, input);
+        String userId = userId(payload);
         String conversationId = text(payload, "conversationId", 64, true);
         String runId = text(payload, "runId", 64, true);
         String agentName = text(payload, "agentName", 128, true);
@@ -151,17 +147,17 @@ public class AgentExecutionService {
         if (current.equals(agentName)) return ok(publicExecution(root));
         if (!"UnionCoordinatorAgent".equals(current) ||
                 !"running".equals(root.get("status")))
-            throw new StaleExecutionException();
+            throw new IllegalStateException("execution 已失效");
         int updated = executionMapper.updateRootAgent(number(root.get("id")), agentName, current);
-        if (updated != 1) throw new StaleExecutionException();
+        if (updated != 1) throw new IllegalStateException("execution 已失效");
         return ok(publicExecution(loadExecution(
                 userId, conversationId, runId, false)));
     }
 
     @Transactional
-    public Map<String, Object> executionStarted(
-            Map<String, Object> payload) {
-        String userId = currentUserId();
+    public Map<String, Object> executionStarted(String input) {
+        Map<String, Object> payload = request(json, input);
+        String userId = userId(payload);
         String conversationId = text(payload, "conversationId", 64, true);
         String runId = text(payload, "runId", 64, true);
         String parentRunId = text(payload, "parentRunId", 64, true);
@@ -176,7 +172,7 @@ public class AgentExecutionService {
                 userId, conversationId, parentRunId, true);
         String parentStatus = String.valueOf(parent.get("status"));
         if (!"running".equals(parentStatus))
-            throw new StaleExecutionException();
+            throw new IllegalStateException("execution 已失效");
         try {
             executionMapper.insertChildExecution(runId, conversationId, userId,
                     number(parent.get("id")), agentName, delegationCallId, task);
@@ -190,9 +186,9 @@ public class AgentExecutionService {
     }
 
     @Transactional
-    public Map<String, Object> executionFinished(
-            Map<String, Object> payload) {
-        String userId = currentUserId();
+    public Map<String, Object> executionFinished(String input) {
+        Map<String, Object> payload = request(json, input);
+        String userId = userId(payload);
         String conversationId = text(payload, "conversationId", 64, true);
         String runId = text(payload, "runId", 64, true);
         String status = executionStatus(payload, "status", true);
@@ -206,8 +202,9 @@ public class AgentExecutionService {
     }
 
     @Transactional
-    public Map<String, Object> completeRun(Map<String, Object> payload) {
-        String userId = currentUserId();
+    public Map<String, Object> completeRun(String input) {
+        Map<String, Object> payload = request(json, input);
+        String userId = userId(payload);
         String conversationId = text(payload, "conversationId", 64, true);
         String rootRunId = text(payload, "runId", 64, true);
         String rootStatus = executionStatus(payload, "status", true);
@@ -355,7 +352,7 @@ public class AgentExecutionService {
         requireId(conversationId);
         requireExecutionToken(runId);
         Map<String, Object> execution = findExecution(userId, conversationId, runId, lock);
-        if (execution == null) throw new StaleExecutionException();
+        if (execution == null) throw new IllegalStateException("execution 已失效");
         return execution;
     }
 
@@ -372,7 +369,7 @@ public class AgentExecutionService {
         String current = String.valueOf(root.get("status"));
         if (TERMINAL_STATUSES.contains(current)) return;
         if (!"running".equals(current) && !"cancel_requested".equals(current))
-            throw new StaleExecutionException();
+            throw new IllegalStateException("execution 已失效");
         executionMapper.requestChildrenCancellation(reason, number(root.get("id")));
         executionMapper.requestRootCancellation(reason, number(root.get("id")));
     }
@@ -384,14 +381,14 @@ public class AgentExecutionService {
         String current = String.valueOf(execution.get("status"));
         if (TERMINAL_STATUSES.contains(current)) return;
         if (!"running".equals(current) && !"cancel_requested".equals(current))
-            throw new StaleExecutionException();
+            throw new IllegalStateException("execution 已失效");
         if ("cancel_requested".equals(current)) {
             status = "cancelled";
             errorCode = (String) execution.get("errorCode");
             if (errorCode == null) errorCode = "cancelled";
         }
         int updated = executionMapper.finishExecution(number(execution.get("id")), status, errorCode);
-        if (updated != 1) throw new StaleExecutionException();
+        if (updated != 1) throw new IllegalStateException("execution 已失效");
     }
 
     private void requireSameMessage(
@@ -473,7 +470,7 @@ public class AgentExecutionService {
         try {
             conversationMapper.requireOwnedActive(conversationId, userId);
         } catch (EmptyResultDataAccessException error) {
-            throw new NotFoundException("会话不存在或未激活");
+            throw new NoSuchElementException("会话不存在或未激活");
         }
     }
 
@@ -525,20 +522,6 @@ public class AgentExecutionService {
         String value = ((String) message.get("content")).trim();
         if (value.isEmpty()) throw new IllegalArgumentException("缺少用户消息");
         return value.substring(0, Math.min(value.length(), 255));
-    }
-
-    private Map<String, Object> parseObject(byte[] payload, String name) {
-        try {
-            Object value = json.readValue(payload, new TypeReference<Object>() {});
-            if (!(value instanceof Map)) throw new IllegalArgumentException(name + "必须是对象");
-            @SuppressWarnings("unchecked")
-            Map<String, Object> result = (Map<String, Object>) value;
-            return result;
-        } catch (IllegalArgumentException error) {
-            throw error;
-        } catch (Exception error) {
-            throw new IllegalArgumentException(name + "不是有效 JSON");
-        }
     }
 
 }

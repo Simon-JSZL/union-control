@@ -2,14 +2,9 @@ package com.union.control.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.epcc.arkweb.helper.AuthContextHolder;
-import com.epcc.arkweb.model.ShiroUser;
 import com.union.control.mapper.ScheduledTaskMapper;
-import com.union.control.security.ScheduledExecutionRealm;
-import org.apache.shiro.SecurityUtils;
-import org.apache.shiro.authz.UnauthenticatedException;
+import com.union.control.utils.ServiceSupport;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.support.CronSequenceGenerator;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
@@ -44,30 +39,23 @@ public class ScheduledTaskService {
     private final ScheduledTaskMapper mapper;
     private final ObjectMapper json;
     private final ConversationService conversationService;
-    private final int tokenTtlSeconds;
 
     @Autowired
     public ScheduledTaskService(
             ScheduledTaskMapper mapper,
             ObjectMapper json,
-            ConversationService conversationService,
-            @Value("${agent.scheduled-token-ttl-seconds:960}") int tokenTtlSeconds,
-            @Value("${agent.scheduled-max-run-seconds:930}") int maxRunSeconds) {
-        if (tokenTtlSeconds <= maxRunSeconds || tokenTtlSeconds > 3600)
-            throw new IllegalArgumentException("scheduled token TTL must exceed max run time and be <= 3600");
+            ConversationService conversationService) {
         this.mapper = mapper;
         this.json = json;
         this.conversationService = conversationService;
-        this.tokenTtlSeconds = tokenTtlSeconds;
     }
 
     @Transactional(isolation = Isolation.REPEATABLE_READ)
-    public Map<String, Object> create(Map<String, Object> payload) {
-        ShiroUser actor = currentActor(true);
-        String userId = actor.getLoginName();
-        String orgCode = actor.getOrgCode();
-        String roleId = actor.getRoleId();
-        rejectReservedIdentityFields(payload);
+    public Map<String, Object> create(String input) {
+        Map<String, Object> payload = ServiceSupport.request(json, input);
+        String userId = ServiceSupport.userId(payload);
+        String orgCode = ServiceSupport.identity(payload, "orgCode");
+        String roleId = ServiceSupport.identity(payload, "roleId");
         mapper.lockUserTasks(userId);
         if (mapper.countRunnableTasks(userId) >= MAX_USER_TASKS)
             throw new ConflictException("每个用户最多保留 100 个可运行任务");
@@ -75,25 +63,29 @@ public class ScheduledTaskService {
         task.put("orgCode", orgCode);
         task.put("roleId", roleId);
         mapper.insertTask(task);
-        return detail(number(task.get("id")));
+        return detailForUser(number(task.get("id")), userId);
     }
 
     @Transactional
-    public Map<String, Object> update(Map<String, Object> payload) {
-        ShiroUser actor = currentActor(true);
-        rejectReservedIdentityFields(payload);
-        String userId = actor.getLoginName();
+    public Map<String, Object> update(String input) {
+        Map<String, Object> payload = ServiceSupport.request(json, input);
+        String userId = ServiceSupport.userId(payload);
         long taskId = positiveLong(payload == null ? null : payload.get("taskId"), "taskId");
         requireTaskOwner(taskId, userId, true);
         Map<String, Object> task = taskDefinition(payload, userId);
         task.put("taskId", taskId);
-        task.put("roleId", actor.getRoleId());
+        task.put("roleId", ServiceSupport.identity(payload, "roleId"));
         if (mapper.updateTask(task) != 1) throw new NotFoundException("定时任务不存在");
-        return detail(taskId);
+        return detailForUser(taskId, userId);
     }
 
-    public Map<String, Object> list(String keyword, String status, int page, int pageSize) {
-        String userId = currentActor(false).getLoginName();
+    public Map<String, Object> list(String input) {
+        Map<String, Object> payload = ServiceSupport.request(json, input);
+        String userId = ServiceSupport.userId(payload);
+        String keyword = optionalText(payload, "keyword", 255, null);
+        String status = optionalText(payload, "status", 32, null);
+        int page = ServiceSupport.integer(payload, "page", 1, Integer.MAX_VALUE);
+        int pageSize = ServiceSupport.integer(payload, "pageSize", 1, 100);
         page(page, pageSize);
         String normalizedStatus = status == null || status.trim().isEmpty()
                 ? null : upper(status.trim());
@@ -109,15 +101,23 @@ public class ScheduledTaskService {
         return ok(pageData(items, total, page, pageSize));
     }
 
-    public Map<String, Object> detail(long taskId) {
-        String userId = currentActor(false).getLoginName();
+    public Map<String, Object> detail(String input) {
+        Map<String, Object> payload = ServiceSupport.request(json, input);
+        return detailForUser(positiveLong(payload.get("taskId"), "taskId"), ServiceSupport.userId(payload));
+    }
+
+    private Map<String, Object> detailForUser(long taskId, String userId) {
         Map<String, Object> task = mapper.findTaskDetail(taskId, userId);
         if (task == null) throw new NotFoundException("定时任务不存在");
         return ok(task);
     }
 
-    public Map<String, Object> runs(long taskId, int page, int pageSize) {
-        String userId = currentActor(false).getLoginName();
+    public Map<String, Object> runs(String input) {
+        Map<String, Object> payload = ServiceSupport.request(json, input);
+        String userId = ServiceSupport.userId(payload);
+        long taskId = positiveLong(payload.get("taskId"), "taskId");
+        int page = ServiceSupport.integer(payload, "page", 1, Integer.MAX_VALUE);
+        int pageSize = ServiceSupport.integer(payload, "pageSize", 1, 100);
         page(page, pageSize);
         requireTaskOwner(taskId, userId, false);
         long total = mapper.countRuns(taskId, userId);
@@ -126,15 +126,17 @@ public class ScheduledTaskService {
         return ok(pageData(publicRuns(rows), total, page, pageSize));
     }
 
-    public Map<String, Object> runDetail(long runId) {
-        String userId = currentActor(false).getLoginName();
+    public Map<String, Object> runDetail(String input) {
+        Map<String, Object> payload = ServiceSupport.request(json, input);
+        String userId = ServiceSupport.userId(payload);
+        long runId = positiveLong(payload.get("runId"), "runId");
         Map<String, Object> row = ownedRun(runId, userId, false);
         if (row == null) throw new NotFoundException("运行记录不存在");
         return ok(publicRun(row, true));
     }
 
-    public Map<String, Object> unread() {
-        String userId = currentActor(false).getLoginName();
+    public Map<String, Object> unread(String input) {
+        String userId = ServiceSupport.userId(ServiceSupport.request(json, input));
         long total = mapper.countUnread(userId);
         List<Map<String, Object>> rows = mapper.findUnread(userId);
         List<Map<String, Object>> items = publicRuns(rows);
@@ -145,29 +147,35 @@ public class ScheduledTaskService {
     }
 
     @Transactional
-    public Map<String, Object> start(long taskId) {
-        String userId = currentActor(false).getLoginName();
+    public Map<String, Object> start(String input) {
+        Map<String, Object> payload = ServiceSupport.request(json, input);
+        String userId = ServiceSupport.userId(payload);
+        long taskId = positiveLong(payload.get("taskId"), "taskId");
         Map<String, Object> task = requireTaskOwner(taskId, userId, true);
         if (!"PAUSED".equals(string(task, "status")))
             throw new ConflictException("只有暂停任务可以启动");
         Instant now = Instant.now();
         Instant next = nextForTask(task, now, true);
         mapper.activateTask(taskId, userId, databaseDateTime(next));
-        return detail(taskId);
+        return detailForUser(taskId, userId);
     }
 
     @Transactional
-    public Map<String, Object> pause(long taskId) {
-        String userId = currentActor(false).getLoginName();
+    public Map<String, Object> pause(String input) {
+        Map<String, Object> payload = ServiceSupport.request(json, input);
+        String userId = ServiceSupport.userId(payload);
+        long taskId = positiveLong(payload.get("taskId"), "taskId");
         requireTaskOwner(taskId, userId, true);
         int changed = mapper.pauseTask(taskId, userId);
         if (changed != 1) throw new ConflictException("只有运行中的任务可以暂停");
-        return detail(taskId);
+        return detailForUser(taskId, userId);
     }
 
     @Transactional
-    public Map<String, Object> discard(long taskId) {
-        String userId = currentActor(false).getLoginName();
+    public Map<String, Object> discard(String input) {
+        Map<String, Object> payload = ServiceSupport.request(json, input);
+        String userId = ServiceSupport.userId(payload);
+        long taskId = positiveLong(payload.get("taskId"), "taskId");
         requireTaskOwner(taskId, userId, true);
         mapper.discardTask(taskId, userId);
         return ok(null);
@@ -197,16 +205,13 @@ public class ScheduledTaskService {
         return mapper.findPendingRunIds(limit);
     }
 
-    public ScheduledExecutionRealm.Grant beginRun(long runId) {
+    public boolean beginRun(long runId, String tokenHash, String expiresAt) {
         Map<String, Object> context = mapper.findPendingRunContext(runId);
-        if (context == null) return null;
+        if (context == null) return false;
         identityValue(string(context, "userId"), "userId");
         identityValue(string(context, "orgCode"), "orgCode");
         identityValue(string(context, "roleId"), "roleId");
-        ScheduledExecutionRealm.Grant grant = ScheduledExecutionRealm.issue();
-        String expiresAt = databaseDateTime(Instant.now().plusSeconds(tokenTtlSeconds));
-        int changed = mapper.beginRun(runId, grant.hash(), expiresAt);
-        return changed == 1 ? grant : null;
+        return mapper.beginRun(runId, identityValue(tokenHash, "tokenHash"), expiresAt) == 1;
     }
 
     public Map<String, Object> executionContext(long runId) {
@@ -215,25 +220,6 @@ public class ScheduledTaskService {
         String owner = string(row, "userId");
         if (owner == null || owner.trim().isEmpty()) throw new DataCorruptionException();
         return row;
-    }
-
-    public Map<String, Object> currentExecutionIdentity() {
-        Object current = SecurityUtils.getSubject().getPrincipal();
-        if (!(current instanceof ScheduledExecutionRealm.Principal))
-            throw new UnauthenticatedException();
-        ScheduledExecutionRealm.Principal principal =
-                (ScheduledExecutionRealm.Principal) current;
-        Map<String, Object> data = new LinkedHashMap<>();
-        data.put("authenticationType", principal.getAuthenticationType());
-        data.put("runId", principal.getRunId());
-        data.put("taskId", principal.getTaskId());
-        data.put("userId", principal.getLoginName());
-        data.put("orgCode", principal.getOrgCode());
-        data.put("prompt", principal.getPrompt());
-        data.put("scheduledAt", principal.getScheduledAt().toString());
-        data.put("timezone", principal.getTimezone());
-        data.put("expiresAt", principal.getExpiresAt().toString());
-        return data;
     }
 
     @Transactional
@@ -273,8 +259,10 @@ public class ScheduledTaskService {
     }
 
     @Transactional
-    public Map<String, Object> open(long runId) {
-        String userId = currentActor(false).getLoginName();
+    public Map<String, Object> open(String input) {
+        Map<String, Object> payload = ServiceSupport.request(json, input);
+        String userId = ServiceSupport.userId(payload);
+        long runId = positiveLong(payload.get("runId"), "runId");
         Map<String, Object> run = ownedRun(runId, userId, true);
         if (run == null) throw new NotFoundException("运行记录不存在");
         Object existing = run.get("resultConversationId");
@@ -290,7 +278,7 @@ public class ScheduledTaskService {
                 ? rawText(result, "content", 1000000, true)
                 : safeError(string(run, "errorMessage"), "定时任务执行失败", 512);
         String conversationId = conversationService.materializeCompletedConversation(
-                string(run, "title"), string(run, "prompt"), content,
+                userId, string(run, "title"), string(run, "prompt"), content,
                 optionalText(result, "agentName", 128, "ScheduledTaskAgent"));
         mapper.attachConversation(runId, conversationId);
         Map<String, Object> opened = new LinkedHashMap<>();
@@ -340,31 +328,10 @@ public class ScheduledTaskService {
         return task;
     }
 
-    private static ShiroUser currentActor(boolean requireRole) {
-        ShiroUser actor = AuthContextHolder.getAuthUserDetails();
-        if (actor == null || invalidIdentity(actor.getLoginName())
-                || (requireRole && (invalidIdentity(actor.getOrgCode())
-                || invalidIdentity(actor.getRoleId()))))
-            throw new UnauthorizedException();
-        return actor;
-    }
-
-    private static boolean invalidIdentity(String value) {
-        return value == null || value.trim().isEmpty() || value.length() > 64;
-    }
-
     private static String identityValue(String value, String field) {
         if (value == null || value.trim().isEmpty() || value.length() > 64)
             throw new IllegalArgumentException(field + " 非法");
         return value;
-    }
-
-    private static void rejectReservedIdentityFields(Map<String, Object> payload) {
-        if (payload == null) return;
-        for (String key : Arrays.asList("userId", "orgCode", "runId", "executionToken",
-                "executionTokenHash", "roleId", "permissions")) {
-            if (payload.containsKey(key)) throw new IllegalArgumentException(key + " 为保留字段");
-        }
     }
 
     private Instant nextForTask(Map<String, Object> task, Instant now, boolean starting) {
@@ -604,7 +571,6 @@ public class ScheduledTaskService {
         }
     }
 
-    public static class UnauthorizedException extends RuntimeException {}
     public static class NotFoundException extends RuntimeException {
         public NotFoundException(String message) { super(message); }
     }

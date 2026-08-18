@@ -1,12 +1,10 @@
 package com.epcc.arkweb.web.llm;
 
-import com.epcc.arkweb.helper.AuthContextHolder;
-import com.epcc.arkweb.model.ShiroUser;
+import com.epcc.arkweb.helper.AuthenticatedRequest;
 import com.union.control.service.ScheduledTaskService;
 import com.epcc.arkweb.utils.ResultMsg;
 import com.epcc.arkweb.vo.llm.ScheduledTaskCommandVO;
 import com.epcc.arkweb.vo.llm.ScheduledTaskQueryVO;
-import org.apache.commons.lang3.StringUtils;
 import org.apache.shiro.authz.annotation.RequiresPermissions;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Controller;
@@ -27,93 +25,84 @@ public class ScheduledTaskController {
     @Autowired
     private ScheduledTaskService scheduledTaskService;
 
+    @Autowired
+    private AuthenticatedRequest request;
+
     @RequestMapping(value = "/scheduledTaskCreate", method = RequestMethod.POST)
     @ResponseBody
     public ResultMsg create(@RequestBody ScheduledTaskCommandVO command) {
-        currentActor();
-        return response(scheduledTaskService.create(command(command)));
+        return response(scheduledTaskService.create(request.json(command(command))));
     }
 
     @RequestMapping(value = "/scheduledTaskUpdate", method = RequestMethod.POST)
     @ResponseBody
     public ResultMsg update(@RequestBody ScheduledTaskCommandVO command) {
-        currentActor();
-        return response(scheduledTaskService.update(command(command)));
+        return response(scheduledTaskService.update(request.json(command(command))));
     }
 
     @RequestMapping(value = "/scheduledTaskList", method = {RequestMethod.GET, RequestMethod.POST})
     @ResponseBody
     public ResultMsg list(ScheduledTaskQueryVO query) {
-        currentActor();
-        return response(scheduledTaskService.list(query.getKeyword(), query.getStatus(),
-                page(query.getPage()), pageSize(query.getPageSize())));
+        return response(scheduledTaskService.list(request.json(
+                "keyword", query.getKeyword(), "status", query.getStatus(),
+                "page", page(query.getPage()), "pageSize", pageSize(query.getPageSize()))));
     }
 
     @RequestMapping(value = "/scheduledTaskDetail", method = RequestMethod.GET)
     @ResponseBody
     public ResultMsg detail(@RequestParam Long taskId) {
-        currentActor();
-        return response(scheduledTaskService.detail(positive(taskId, "taskId")));
+        return response(scheduledTaskService.detail(request.json(
+                "taskId", positive(taskId, "taskId"))));
     }
 
     @RequestMapping(value = "/scheduledTaskRunList", method = {RequestMethod.GET, RequestMethod.POST})
     @ResponseBody
     public ResultMsg runList(ScheduledTaskQueryVO query) {
-        currentActor();
         query.setTaskId(positive(query.getTaskId(), "taskId"));
-        return response(scheduledTaskService.runs(query.getTaskId(), page(query.getPage()),
-                pageSize(query.getPageSize())));
+        return response(scheduledTaskService.runs(request.json(
+                "taskId", query.getTaskId(), "page", page(query.getPage()),
+                "pageSize", pageSize(query.getPageSize()))));
     }
 
     @RequestMapping(value = "/scheduledTaskRunDetail", method = RequestMethod.GET)
     @ResponseBody
     public ResultMsg runDetail(@RequestParam Long runId) {
-        currentActor();
-        return response(scheduledTaskService.runDetail(positive(runId, "runId")));
+        return response(scheduledTaskService.runDetail(request.json(
+                "runId", positive(runId, "runId"))));
     }
 
     @RequestMapping(value = "/scheduledTaskUnread", method = RequestMethod.GET)
     @ResponseBody
     public ResultMsg unread() {
-        currentActor();
-        return response(scheduledTaskService.unread());
+        return response(scheduledTaskService.unread(request.json()));
     }
 
     @RequestMapping(value = "/scheduledTaskStart", method = RequestMethod.POST)
     @ResponseBody
     public ResultMsg start(@RequestBody IdCommand command) {
-        currentActor();
-        return response(scheduledTaskService.start(positive(command.getTaskId(), "taskId")));
+        return response(scheduledTaskService.start(request.json(
+                "taskId", positive(command.getTaskId(), "taskId"))));
     }
 
     @RequestMapping(value = "/scheduledTaskPause", method = RequestMethod.POST)
     @ResponseBody
     public ResultMsg pause(@RequestBody IdCommand command) {
-        currentActor();
-        return response(scheduledTaskService.pause(positive(command.getTaskId(), "taskId")));
+        return response(scheduledTaskService.pause(request.json(
+                "taskId", positive(command.getTaskId(), "taskId"))));
     }
 
     @RequestMapping(value = "/scheduledTaskDiscard", method = RequestMethod.POST)
     @ResponseBody
     public ResultMsg discard(@RequestBody IdCommand command) {
-        currentActor();
-        return response(scheduledTaskService.discard(positive(command.getTaskId(), "taskId")));
+        return response(scheduledTaskService.discard(request.json(
+                "taskId", positive(command.getTaskId(), "taskId"))));
     }
 
     @RequestMapping(value = "/scheduledTaskRunOpen", method = RequestMethod.POST)
     @ResponseBody
     public ResultMsg open(@RequestBody IdCommand command) {
-        currentActor();
-        return response(scheduledTaskService.open(positive(command.getRunId(), "runId")));
-    }
-
-    private static void currentActor() {
-        ShiroUser user = AuthContextHolder.getAuthUserDetails();
-        if (user == null || StringUtils.isBlank(user.getLoginName())
-                || StringUtils.isBlank(user.getOrgCode())
-                || StringUtils.isBlank(user.getRoleId())) {
-            throw new org.apache.shiro.authz.UnauthenticatedException();
-        }
+        return response(scheduledTaskService.open(request.json(
+                "runId", positive(command.getRunId(), "runId"))));
     }
 
     private static Long positive(Long value, String name) {
