@@ -1,7 +1,7 @@
 package com.epcc.arkweb;
 
-import com.union.control.local.security.AuthenticatedUser;
-import com.union.control.local.security.LocalCasRealm;
+import com.epcc.arkweb.config.LocalCasRealm;
+import com.epcc.arkweb.model.AuthenticatedUser;
 import org.apache.shiro.mgt.DefaultSecurityManager;
 import org.apache.shiro.subject.SimplePrincipalCollection;
 import org.apache.shiro.subject.Subject;

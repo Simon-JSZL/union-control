@@ -86,8 +86,9 @@ even when isolated feature tests pass.
 
 Java sources follow the production project's responsibility-based packages:
 MyBatis interfaces in `mapper`, application services in `service`, timer
-entrypoints in `ark-web-server`'s `scheduled` package, and Shiro components in
-`ark-web-server`'s `security` and `local.security` packages.
+entrypoints in `ark-web-server`'s `com.epcc.arkweb.schedule` package, Realm and
+Shiro configuration in `config`, filters in `filter`, identity models in
+`model`, and authentication tokens in `security`.
 Scheduled-task code must not introduce a parallel domain package containing its
 own mapper, service, Web facade, production-authentication wrapper, or local mock.
 
@@ -118,12 +119,13 @@ is no scheduled-task-specific model endpoint.
 
 ## Protocol
 
-- `POST /llm/chatMessage` accepts the standard AG-UI `RunAgentInput`, claims
-  the user’s single active run, and transparently proxies AG-UI SSE.
+- `POST /llm/chatMessage` accepts the standard AG-UI `RunAgentInput`, creates
+  its persistence row, and transparently proxies AG-UI SSE.
 - `GET /llm/conversationDetails` returns conversation metadata and a
   `messages` array of standard AG-UI messages.
-- `POST /llm/executionCancel` requires `conversationId` and `runId`, records
-  the cancellation request, and sends an owner-scoped cancel request to py-app.
+- `POST /llm/executionCancel` requires `conversationId` and `runId` and forwards
+  the owner-scoped cancellation request to py-app. Control does not maintain a
+  second cancellation state.
 - `POST /llm/chatMessageSync` keeps the product `{content}` response.
 
 There is no execution-current/recovery endpoint, legacy event translation,
@@ -133,9 +135,8 @@ SDK item API, heartbeat event, or dual-write path.
 
 `ai_conversation` owns only conversation metadata and status.
 
-`ai_agent_execution` owns Coordinator root executions and their subagent
-children. A generated-column unique key enforces one active root execution per
-user while allowing multiple children under that root.
+`ai_agent_execution` stores the root and child execution snapshots submitted by
+py-app. Control does not enforce Agent concurrency or execution topology.
 
 `ai_conversation_message` stores:
 
@@ -148,21 +149,24 @@ user while allowing multiple children under that root.
 Browser history reconstructs each child execution as a standard AG-UI
 `ActivityMessage`; model history contains root execution messages only.
 
-Browser SSE disconnects cancel the exact claimed root and its children. Root
-and child transitions are one-way and transactional: a committed
-`cancel_requested` state can only become `cancelled`. Startup and scheduled
-cleanup terminate stale `running` and `cancel_requested` trees, while py-app's
-matching hard deadline stops the underlying model and tool work.
+Browser SSE disconnects forward cancellation to py-app. Py-app owns execution
+timeouts, cancellation precedence, root/child lifecycle, and the final status;
+control persists the final snapshot without maintaining a second execution
+state machine.
 
 `ai_memory_file` and `ai_memory_operation` implement PydanticAI Harness
 `SearchableMemoryStore` semantics: bounded read/list/search, CAS versioning,
 operation-ID idempotency, and operation fingerprint conflicts.
 
-The isolated `sensitive_data_demo` flow mirrors production field encryption at
-the MyBatis database boundary. The normal interceptor encrypts writes and
-decrypts reads; a post-decrypt hook replaces plaintext with a masked value and
-an owner-bound Redis reveal token. Plaintext reveal is a separate authenticated
-API path and never re-enters the masking hook.
+The local sensitive-data implementation mirrors the restored production
+`AESInterceptor` and `SymmetricalSecurityUtils` contracts. Sensitive statements
+route through general encryption, general decryption, or the AddressBook table
+migration branch. The global reveal mode replaces sensitive plaintext fragments
+with masks and short-lived Redis tokens. AddressBook result rows whose returned
+`role` value is explicitly configured may remain plaintext; missing, unknown, or
+invalid roles stay masked. The authenticated reveal API decrypts only the token's
+fragment. The unavailable production `sensitiveProxy` is replaced locally only
+when the `local-sensitive-mock` profile is explicitly active.
 
 `agent_scheduled_task` and `agent_scheduled_task_run` persist task definitions
 and individual outcomes. The task table owns the natural-language prompt,

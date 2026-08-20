@@ -3,7 +3,7 @@ package com.epcc.arkweb.helper;
 import com.epcc.arkweb.ShiroTestSupport;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.union.control.local.security.LocalCasRealm;
+import com.epcc.arkweb.config.LocalCasRealm;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;

@@ -53,7 +53,7 @@
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <configuration>
-                    <mainClass>com.union.control.UnionControlApplication</mainClass>
+                    <mainClass>com.epcc.arkweb.Application</mainClass>
                 </configuration>
             </plugin>
         </plugins>

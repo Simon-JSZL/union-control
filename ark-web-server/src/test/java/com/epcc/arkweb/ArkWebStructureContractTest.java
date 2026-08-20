@@ -26,12 +26,15 @@ public class ArkWebStructureContractTest {
     private static final Path WORKSPACE = Paths.get("..");
 
     @Test
-    public void localApplicationKeepsTheOriginalMainClassAndScansBothModules() throws Exception {
-        String source = source("com/union/control/UnionControlApplication.java");
+    public void localApplicationUsesTheProductionRootPackage() throws Exception {
+        String source = source("com/epcc/arkweb/Application.java");
         assertThat(source)
-                .contains("class UnionControlApplication")
+                .contains("package com.epcc.arkweb;")
+                .contains("class Application")
+                .contains("\"com.epcc.arkweb\"")
                 .contains("\"com.union.control\"")
-                .contains("\"com.epcc.arkweb\"");
+                .contains("@MapperScan(\"com.union.control.mapper\")");
+        assertThat(ROOT.resolve("com/union/control")).doesNotExist();
     }
 
     @Test
@@ -96,8 +99,8 @@ public class ArkWebStructureContractTest {
                 .doesNotContain("AuthContextHolder")
                 .doesNotContain("currentUserId()");
         assertThat(ROOT.resolve("com/epcc/arkweb/helper/AuthenticatedRequest.java")).exists();
-        assertThat(ROOT.resolve("com/union/control/local/security/ShiroConfig.java")).exists();
-        assertThat(ROOT.resolve("com/union/control/security/ScheduledExecutionRealm.java")).exists();
+        assertThat(ROOT.resolve("com/epcc/arkweb/config/ShiroConfig.java")).exists();
+        assertThat(ROOT.resolve("com/epcc/arkweb/config/ScheduledExecutionRealm.java")).exists();
     }
 
     @Test
@@ -124,6 +127,10 @@ public class ArkWebStructureContractTest {
         assertThat(files).contains(
                 "ScheduledTaskScheduler.java", "ScheduledExecutionRealm.java",
                 "AuthContextHolder.java", "ShiroUser.java", "ResultMsg.java");
+        assertThat(ROOT.resolve("com/epcc/arkweb/schedule/ScheduledTaskScheduler.java")).exists();
+        assertThat(ROOT.resolve("com/epcc/arkweb/filter/AgentAuthenticationFilter.java")).exists();
+        assertThat(ROOT.resolve("com/epcc/arkweb/model/AuthenticatedUser.java")).exists();
+        assertThat(ROOT.resolve("com/epcc/arkweb/security/CasSessionToken.java")).exists();
     }
 
     private static String source(String relative) throws Exception {

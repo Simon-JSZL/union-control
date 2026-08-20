@@ -71,20 +71,14 @@ public class LlmController {
 
     @PostMapping("/executionCancel")
     @ResponseBody
-    public Map<String, Object> executionCancel(
+    public ResponseEntity<byte[]> executionCancel(
             @RequestHeader(value = HttpHeaders.COOKIE, required = false) String cookie,
             @RequestBody Map<String, Object> payload) {
-        Map<String, Object> response = executions.cancelExecution(request.json(payload));
-        Object raw = response.get("data");
-        if (raw instanceof Map) {
-            Map<?, ?> active = (Map<?, ?>) raw;
-            Object conversationId = active.get("conversationId");
-            Object runId = active.get("runId");
-            if (conversationId instanceof String && runId instanceof String) {
-                gateway.cancel(cookie, (String) conversationId, (String) runId);
-            }
-        }
-        return response;
+        Object conversationId = payload.get("conversationId");
+        Object runId = payload.get("runId");
+        if (!(conversationId instanceof String) || !(runId instanceof String))
+            throw new IllegalArgumentException("缺少 execution 标识");
+        return gateway.cancel(cookie, (String) conversationId, (String) runId);
     }
 
     @PostMapping(value = "/chatMessage", produces = "text/event-stream")
@@ -97,25 +91,12 @@ public class LlmController {
         Map<String, Object> execution = (Map<String, Object>) claimed.get("data");
         String conversationId = String.valueOf(execution.get("conversationId"));
         String runId = String.valueOf(execution.get("runId"));
-        int status;
         try {
-            status = gateway.stream(cookie, clientPayload, response);
+            gateway.stream(cookie, clientPayload, response);
         } catch (AgentProxyService.ClientDisconnectedException error) {
-            executions.cancelExecution(request.json(
-                    "conversationId", conversationId, "runId", runId,
-                    "reason", "client_disconnected"));
             gateway.cancel(cookie, conversationId, runId);
             return;
-        } catch (RuntimeException error) {
-            executions.failExecution(request.json(
-                    "conversationId", conversationId, "runId", runId,
-                    "errorCode", "agent_proxy_failed"));
-            throw error;
         }
-        if (status >= 400)
-            executions.failExecution(request.json(
-                    "conversationId", conversationId, "runId", runId,
-                    "errorCode", "agent_start_failed"));
     }
 
     @PostMapping("/chatMessageSync")

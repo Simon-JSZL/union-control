@@ -13,17 +13,17 @@ The production scheduled-task changes follow the existing layered packages:
 ```text
 service/src/main/java/com/union/control/mapper/ScheduledTaskMapper.java
 service/src/main/java/com/union/control/service/ScheduledTaskService.java
-ark-web-server/src/main/java/com/union/control/scheduled/ScheduledTaskScheduler.java
-ark-web-server/src/main/java/com/union/control/security/ScheduledExecution*.java
+ark-web-server/src/main/java/com/epcc/arkweb/schedule/ScheduledTaskScheduler.java
+ark-web-server/src/main/java/com/epcc/arkweb/config/ScheduledExecutionRealm.java
+ark-web-server/src/main/java/com/epcc/arkweb/filter/ScheduledExecutionFilter.java
 ```
 
-The Web `scheduled` package contains only the timer entrypoint. Mapper and
+The Web `schedule` package contains only the timer entrypoint. Mapper and
 business service code remain in `service`; authentication code remains in Web.
 
-Local-only authentication mocks live under
-`ark-web-server/src/main/java/com/union/control/local`.
-Never copy that package, the local `com.epcc.arkweb` stand-ins, or the local
-`ShiroConfig` into production.
+Local-only authentication mocks reuse the production `com.epcc.arkweb`
+package layout. Never copy the local implementations or `ShiroConfig` into
+production.
 The service module must not contain any Spring MVC controller.
 
 Production Shiro wiring is additive: register `ScheduledExecutionRealm` beside
@@ -49,11 +49,17 @@ Configuration:
 - `SCHEDULED_TASK_WORKER_THREADS` (default `2`)
 - `SCHEDULED_TASK_MAX_RUN_SECONDS` (default `930`)
 - `SCHEDULED_TASK_TOKEN_TTL_SECONDS` (default `960`; must exceed the max run time)
-- `AGENT_MAX_RUN_SECONDS` (default `900`)
-- `AGENT_CANCEL_GRACE_SECONDS` (default `30`)
 - `MYSQL_URL`, `MYSQL_USER`, `MYSQL_PASSWORD` (`MYSQL_URL` must use a UTC connection timezone)
 - `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, `REDIS_TIMEOUT_MS`
+- `SENSITIVE_REVEAL_ENABLED` (default `false`)
+- `SENSITIVE_REVEAL_STATEMENTS` (default empty; comma-separated exact mapper statement IDs)
 - `SENSITIVE_REVEAL_TTL_SECONDS` (default `300`)
+
+The unavailable production `sensitiveProxy` has an intentionally non-cryptographic
+local stand-in. Enable it only with `--spring.profiles.active=local-sensitive-mock`;
+production must keep the existing AES256 proxy binding.
+The Maven `local-sensitive-compat` profile is active by default; when combining
+it with another Maven profile, enable both explicitly with `-Pother,local-sensitive-compat`.
 
 CAS and scheduled-execution API routes reuse production Apache Shiro permission
 `@RequiresPermissions("/assistantManager/page")`. In the local environment, the

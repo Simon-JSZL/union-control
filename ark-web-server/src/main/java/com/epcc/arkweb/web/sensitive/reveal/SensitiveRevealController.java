@@ -1,7 +1,7 @@
 package com.epcc.arkweb.web.sensitive.reveal;
 
 import com.epcc.arkweb.helper.AuthenticatedRequest;
-import com.union.control.sensitive.reveal.SensitiveRevealService;
+import com.union.control.service.sensitive.SensitiveRevealService;
 import org.apache.shiro.authz.annotation.RequiresPermissions;
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpHeaders;
@@ -17,7 +17,7 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/sensitive/reveal")
-@RequiresPermissions("agent:execute")
+@RequiresPermissions(value = "/assistantManager/page")
 public class SensitiveRevealController {
     private final SensitiveRevealService service;
     private final AuthenticatedRequest request;
@@ -33,6 +33,7 @@ public class SensitiveRevealController {
             @RequestBody Map<String, Object> payload) {
         String plaintext = service.reveal(request.json(payload));
         return ResponseEntity.ok().cacheControl(CacheControl.noStore())
+                .header(HttpHeaders.PRAGMA, "no-cache")
                 .body(Collections.singletonMap("value", plaintext));
     }
 }

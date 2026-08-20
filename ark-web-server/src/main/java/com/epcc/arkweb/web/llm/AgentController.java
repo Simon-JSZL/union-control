@@ -5,7 +5,7 @@ import com.union.control.service.ConversationService;
 import com.union.control.service.MemoryStoreService;
 import com.union.control.service.RunningAnalysisMockService;
 import com.epcc.arkweb.helper.AuthenticatedRequest;
-import com.union.control.security.ScheduledExecutionRealm;
+import com.epcc.arkweb.config.ScheduledExecutionRealm;
 import org.apache.shiro.SecurityUtils;
 import org.apache.shiro.authz.UnauthenticatedException;
 import org.apache.shiro.authz.annotation.RequiresPermissions;
@@ -68,24 +68,6 @@ public class AgentController {
     public Map<String, Object> completeRun(
             @RequestBody Map<String, Object> payload) {
         return executions.completeRun(request.json(payload));
-    }
-
-    @PostMapping("/rootExecutionSelected")
-    public Map<String, Object> rootExecutionSelected(
-            @RequestBody Map<String, Object> payload) {
-        return executions.rootExecutionSelected(request.json(payload));
-    }
-
-    @PostMapping("/executionStarted")
-    public Map<String, Object> executionStarted(
-            @RequestBody Map<String, Object> payload) {
-        return executions.executionStarted(request.json(payload));
-    }
-
-    @PostMapping("/executionFinished")
-    public Map<String, Object> executionFinished(
-            @RequestBody Map<String, Object> payload) {
-        return executions.executionFinished(request.json(payload));
     }
 
     @PostMapping("/memoryStore/read")

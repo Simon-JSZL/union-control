@@ -10,7 +10,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.client.ClientHttpResponse;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StreamUtils;
-import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.ResponseErrorHandler;
 import org.springframework.web.client.RestTemplate;
 import org.slf4j.Logger;
@@ -50,7 +49,7 @@ public class AgentProxyService {
         this.http.setErrorHandler(passThroughErrors);
     }
 
-    public int stream(String cookie, byte[] payload, HttpServletResponse response) {
+    public void stream(String cookie, byte[] payload, HttpServletResponse response) {
         long startedAt = System.nanoTime();
         logger.info("Agent call started mode=stream payload_bytes={}", payload.length);
         try {
@@ -91,7 +90,6 @@ public class AgentProxyService {
                     }
             );
             logCompleted("stream", status, startedAt);
-            return status;
         } catch (RuntimeException error) {
             logFailed("stream", startedAt, error);
             throw error;
@@ -147,24 +145,19 @@ public class AgentProxyService {
         }
     }
 
-    public void cancel(String cookie, String conversationId, String runId) {
+    public ResponseEntity<byte[]> cancel(String cookie, String conversationId, String runId) {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         headers.set(HttpHeaders.COOKIE, cookie);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("conversationId", conversationId);
         body.put("runId", runId);
-        try {
-            http.exchange(
-                    pyAppBaseUrl + "/agent/v1/runs/cancel",
-                    HttpMethod.POST,
-                    new HttpEntity<Map<String, Object>>(body, headers),
-                    byte[].class
-            );
-        } catch (RestClientException error) {
-            logger.warn("Agent cancel delivery failed conversation_id={} run_id={}",
-                    conversationId, runId);
-        }
+        return http.exchange(
+                pyAppBaseUrl + "/agent/v1/runs/cancel",
+                HttpMethod.POST,
+                new HttpEntity<Map<String, Object>>(body, headers),
+                byte[].class
+        );
     }
 
     private static void copyHeader(ClientHttpResponse upstream, HttpServletResponse response, String name)

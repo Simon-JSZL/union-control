@@ -4,8 +4,10 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import org.junit.Test;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestTemplate;
 
@@ -16,6 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 
 public class AgentProxyServiceTest {
     @Test
@@ -38,6 +41,25 @@ public class AgentProxyServiceTest {
                 .doesNotContain("cookie-secret")
                 .doesNotContain("plaintext-secret")
                 .doesNotContain("model-secret");
+        server.verify();
+    }
+
+    @Test
+    public void cancellationPassesThroughPyAppResponse() {
+        RestTemplate http = new RestTemplate();
+        MockRestServiceServer server = MockRestServiceServer.createServer(http);
+        server.expect(requestTo("http://py-app/agent/v1/runs/cancel"))
+                .andExpect(method(HttpMethod.POST))
+                .andRespond(withStatus(HttpStatus.CONFLICT)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body("{\"detail\":\"already finished\"}"));
+
+        ResponseEntity<byte[]> response = new AgentProxyService("http://py-app", http)
+                .cancel("CASSESSIONID=session", "thread-1", "run-1");
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(new String(response.getBody(), StandardCharsets.UTF_8))
+                .isEqualTo("{\"detail\":\"already finished\"}");
         server.verify();
     }
 
