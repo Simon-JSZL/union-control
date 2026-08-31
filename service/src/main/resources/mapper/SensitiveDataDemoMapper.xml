@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.union.control.mapper.SensitiveDataDemoMapper">
+    <insert id="insert">
+        INSERT INTO sensitive_data_demo.sensitive_data_demo (phone_number)
+        VALUES (#{phoneNumber})
+    </insert>
+
+    <select id="query" resultType="map">
+        SELECT id, phone_number AS phoneNumber,
+               DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%s') AS createdAt
+        FROM sensitive_data_demo.sensitive_data_demo
+        ORDER BY id DESC
+    </select>
+
+    <insert id="insertAddressBook">
+        INSERT INTO t_m_announce_address_book
+            (name, role, email, telephone, mobile_number)
+        VALUES
+            (#{name}, #{role}, #{email}, #{telephone}, #{mobileNumber})
+    </insert>
+
+    <select id="queryAddressBook"
+            resultType="com.union.control.mapper.SensitiveAddressBookDemo">
+        SELECT id, name, role, email, telephone,
+               mobile_number AS mobileNumber,
+               DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%s') AS createdAt
+        FROM t_m_announce_address_book
+        ORDER BY id DESC
+    </select>
+</mapper>

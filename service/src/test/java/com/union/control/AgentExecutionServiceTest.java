@@ -6,6 +6,7 @@ import com.union.control.mapper.ConversationMapper;
 import com.union.control.service.AgentExecutionService;
 import org.junit.Before;
 import org.junit.Test;
+import org.mockito.InOrder;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -15,8 +16,11 @@ import java.util.List;
 import java.util.Map;
 
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 public class AgentExecutionServiceTest {
     private AgentExecutionService service;
@@ -28,6 +32,7 @@ public class AgentExecutionServiceTest {
         executions = mock(AgentExecutionMapper.class);
         conversations = mock(ConversationMapper.class);
         service = new AgentExecutionService(executions, conversations, new ObjectMapper());
+        when(conversations.requireOwned("thread-1", TestJson.USER_ID, true)).thenReturn(1L);
     }
 
     @Test
@@ -46,6 +51,19 @@ public class AgentExecutionServiceTest {
     }
 
     @Test
+    public void aguiRunRejectsAnExistingConversationOwnedByAnotherUser() {
+        String body = "{\"threadId\":\"foreign-thread\",\"runId\":\"run-1\"," +
+                "\"messages\":[],\"state\":{},\"context\":[],\"forwardedProps\":{}}";
+        when(conversations.requireOwnedActive("foreign-thread", TestJson.USER_ID))
+                .thenReturn(null);
+
+        assertThatThrownBy(() -> service.claimAguiRun(TestJson.request(body)))
+                .isInstanceOf(java.util.NoSuchElementException.class);
+        verify(executions, never()).insertRootExecution(
+                "run-1", "foreign-thread", TestJson.USER_ID);
+    }
+
+    @Test
     public void completionPersistsTheStatusChosenByPyApp() {
         when(executions.findExecution(TestJson.USER_ID, "thread-1", "run-1", true))
                 .thenReturn(Collections.singletonList(root("running", null)));
@@ -58,6 +76,22 @@ public class AgentExecutionServiceTest {
         service.completeRun(TestJson.request(payload));
 
         verify(executions).finishExecution(7L, "sdk_terminal", null);
+    }
+
+    @Test
+    public void completionLocksTheConversationBeforeAllocatingMessageSequences() {
+        when(executions.findExecution(TestJson.USER_ID, "thread-1", "run-1", true))
+                .thenReturn(Collections.singletonList(root("running", null)));
+        when(executions.finishExecution(7L, "completed", null)).thenReturn(1);
+
+        service.completeRun(TestJson.request(completion(
+                execution("run-1", null, "KnowledgeAgent", null, null))));
+
+        InOrder order = inOrder(conversations, executions);
+        order.verify(conversations).requireOwned("thread-1", TestJson.USER_ID, true);
+        order.verify(executions).findExecution(
+                TestJson.USER_ID, "thread-1", "run-1", true);
+        order.verify(conversations).currentMessageSequence("thread-1");
     }
 
     @Test

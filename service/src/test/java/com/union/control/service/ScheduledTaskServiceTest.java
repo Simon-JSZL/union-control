@@ -46,14 +46,6 @@ public class ScheduledTaskServiceTest {
     }
 
     @Test
-    public void executionContextComesFromTheRunningDomainRun() {
-        Map<String, Object> context = new LinkedHashMap<>();
-        context.put("userId", TestJson.USER_ID);
-        when(mapper.findRunContext(7L)).thenReturn(context);
-        assertThat(service.executionContext(7L)).isSameAs(context);
-    }
-
-    @Test
     public void timezoneMustBeAZoneInfoCompatibleTzdbIdentifier() {
         assertThat(ScheduledTaskService.zone("UTC")).isEqualTo(ZoneId.of("UTC"));
         assertThat(ScheduledTaskService.zone("Asia/Shanghai"))
@@ -149,6 +141,7 @@ public class ScheduledTaskServiceTest {
         assertThat(updated.getValue())
                 .containsEntry("taskId", 7L)
                 .containsEntry("userId", TestJson.USER_ID)
+                .containsEntry("orgCode", TestJson.ORG_CODE)
                 .containsEntry("roleId", TestJson.ROLE_ID)
                 .containsEntry("title", "新标题")
                 .containsEntry("prompt", "新的可信任务提示")

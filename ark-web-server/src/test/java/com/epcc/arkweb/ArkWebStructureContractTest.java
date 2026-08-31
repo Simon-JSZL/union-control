@@ -104,6 +104,16 @@ public class ArkWebStructureContractTest {
     }
 
     @Test
+    public void scheduledIdentityReturnsTheCompleteTrustedSnapshot() throws Exception {
+        String source = source("com/epcc/arkweb/web/llm/AgentController.java");
+
+        assertThat(source)
+                .contains("data.put(\"userId\", principal.getLoginName())")
+                .contains("data.put(\"orgCode\", principal.getOrgCode())")
+                .contains("data.put(\"roleId\", principal.getRoleId())");
+    }
+
+    @Test
     public void browserCommandsCannotDeserializeTrustedIdentity() throws Exception {
         String command = source("com/epcc/arkweb/vo/llm/ScheduledTaskCommandVO.java");
         String query = source("com/epcc/arkweb/vo/llm/ScheduledTaskQueryVO.java");
@@ -124,6 +134,7 @@ public class ArkWebStructureContractTest {
         assertThat(files).doesNotContain("ScheduledTaskServiceImpl.java");
         assertThat(files).doesNotContain("ApiExceptionHandler.java");
         assertThat(files).doesNotContain("ScheduledTaskMapper.java");
+        assertThat(files).doesNotContain("CasSessionFilter.java", "TrustedPrincipal.java");
         assertThat(files).contains(
                 "ScheduledTaskScheduler.java", "ScheduledExecutionRealm.java",
                 "AuthContextHolder.java", "ShiroUser.java", "ResultMsg.java");

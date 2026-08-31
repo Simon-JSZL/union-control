@@ -4,7 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.union.control.mapper.AgentExecutionMapper;
 import com.union.control.mapper.ConversationMapper;
-import org.springframework.dao.EmptyResultDataAccessException;
+import com.union.control.mapper.ScheduledTaskMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,14 +21,17 @@ import static com.union.control.utils.ServiceSupport.*;
 public class ConversationService {
     private final ConversationMapper conversationMapper;
     private final AgentExecutionMapper executionMapper;
+    private final ScheduledTaskMapper scheduledTaskMapper;
     private final ObjectMapper json;
 
     public ConversationService(
             ConversationMapper conversationMapper,
             AgentExecutionMapper executionMapper,
+            ScheduledTaskMapper scheduledTaskMapper,
             ObjectMapper json) {
         this.conversationMapper = conversationMapper;
         this.executionMapper = executionMapper;
+        this.scheduledTaskMapper = scheduledTaskMapper;
         this.json = json;
     }
 
@@ -91,6 +94,7 @@ public class ConversationService {
         requireOwned(userId, conversationId, true);
         conversationMapper.softDeleteMessages(conversationId, userId);
         executionMapper.softDeleteExecutions(conversationId, userId);
+        scheduledTaskMapper.softDeleteByConversation(conversationId, userId);
         int updated = conversationMapper.softDeleteConversation(conversationId, userId);
         if (updated != 1) throw new NoSuchElementException("会话不存在");
         return ok(null);
@@ -211,14 +215,10 @@ public class ConversationService {
     }
 
     private Map<String, Object> loadConversation(String userId, String conversationId) {
-        try {
-            Map<String, Object> conversation =
-                    conversationMapper.findConversation(userId, conversationId);
-            if (conversation == null) throw new NoSuchElementException("会话不存在");
-            return conversation;
-        } catch (EmptyResultDataAccessException error) {
-            throw new NoSuchElementException("会话不存在");
-        }
+        Map<String, Object> conversation =
+                conversationMapper.findConversation(userId, conversationId);
+        if (conversation == null) throw new NoSuchElementException("会话不存在");
+        return conversation;
     }
 
     private List<Map<String, Object>> loadExecutionRows(String userId, String conversationId) {
@@ -241,9 +241,7 @@ public class ConversationService {
 
 
     private void requireOwned(String userId, String conversationId, boolean lock) {
-        try {
-            conversationMapper.requireOwned(conversationId, userId, lock);
-        } catch (EmptyResultDataAccessException error) {
+        if (conversationMapper.requireOwned(conversationId, userId, lock) == null) {
             throw new NoSuchElementException("会话不存在");
         }
     }

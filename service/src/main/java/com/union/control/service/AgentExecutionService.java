@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.union.control.mapper.AgentExecutionMapper;
 import com.union.control.mapper.ConversationMapper;
 import org.springframework.dao.DuplicateKeyException;
-import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -58,6 +57,8 @@ public class AgentExecutionService {
         String rootRunId = text(payload, "runId", 64, true);
         requireId(conversationId);
         requireExecutionToken(rootRunId);
+        if (conversationMapper.requireOwned(conversationId, userId, true) == null)
+            throw new NoSuchElementException("会话不存在");
         Map<String, Object> root = loadExecution(
                 userId, conversationId, rootRunId, true);
         if (root.get("parentExecutionId") != null)
@@ -188,9 +189,7 @@ public class AgentExecutionService {
     }
 
     private void requireOwnedActive(String userId, String conversationId) {
-        try {
-            conversationMapper.requireOwnedActive(conversationId, userId);
-        } catch (EmptyResultDataAccessException error) {
+        if (conversationMapper.requireOwnedActive(conversationId, userId) == null) {
             throw new NoSuchElementException("会话不存在或未激活");
         }
     }

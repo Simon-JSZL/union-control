@@ -17,7 +17,8 @@ public final class Constant {
     public static final String ENCRYPT_END = "]";
     public static final String REGEX_DECRYPT_TAG = "#\\[([^#\\]]*)\\]";
     public static final String INTERCEPTOR_ITEMS =
-            "AnnounceAddressBookRecordMapper,ReformTrackMapper,QuestionnaireMapper,"
+            "SensitiveDataDemoMapper,AnnounceAddressBookRecordMapper,ReformTrackMapper,"
+                    + "QuestionnaireMapper,"
                     + "AnnounceMailSendMapper,AnnounceMailMapper,AppealMapper,TicketMapper,"
                     + "NotifyMapper,MailDetailMapper";
 }

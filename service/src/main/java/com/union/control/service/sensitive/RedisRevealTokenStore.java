@@ -2,18 +2,22 @@ package com.union.control.service.sensitive;
 
 import com.nucc.channel.ark.common.redis.RedisCacheService;
 import com.nucc.channel.ark.common.util.ResultUtil;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.List;
 
+@Component
 public final class RedisRevealTokenStore {
-    private static final byte[] PREFIX = "sensitive:reveal:".getBytes(StandardCharsets.US_ASCII);
+    private static final String PREFIX = "sensitive:reveal:";
     private final RedisCacheService redis;
     private final int ttlSeconds;
 
-    public RedisRevealTokenStore(RedisCacheService redis, long ttlSeconds) {
+    public RedisRevealTokenStore(RedisCacheService redis,
+            @Value("${sensitive.reveal.ttl-seconds:300}") long ttlSeconds) {
         if (redis == null) throw new IllegalArgumentException("Redis service is required");
         if (ttlSeconds <= 0 || ttlSeconds > Integer.MAX_VALUE) {
             throw new IllegalArgumentException("Reveal TTL is out of range");
@@ -56,7 +60,7 @@ public final class RedisRevealTokenStore {
         try {
             byte[] hash = MessageDigest.getInstance("SHA-256")
                     .digest(token.getBytes(StandardCharsets.UTF_8));
-            StringBuilder key = new StringBuilder(new String(PREFIX, StandardCharsets.US_ASCII));
+            StringBuilder key = new StringBuilder(PREFIX);
             for (byte value : hash) key.append(String.format("%02x", value & 0xff));
             return key.toString();
         } catch (NoSuchAlgorithmException impossible) {

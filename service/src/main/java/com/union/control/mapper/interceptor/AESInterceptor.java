@@ -1,13 +1,15 @@
 package com.union.control.mapper.interceptor;
 
-import com.nucc.channel.ark.common.exception.CheckException;
-import com.union.control.service.sensitive.AddressBookPlaintextPolicy;
-import com.union.control.service.sensitive.SensitiveFieldCodec;
-import com.union.control.service.sensitive.SensitiveRevealPolicy;
+import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson.TypeReference;
+import com.nucc.channel.ark.common.util.Constant;
 import com.union.control.service.sensitive.SensitiveRevealProcessor;
-import com.union.control.utils.security.SymmetricalSecurityUtils;
 import org.apache.ibatis.executor.Executor;
+import org.apache.ibatis.mapping.BoundSql;
 import org.apache.ibatis.mapping.MappedStatement;
+import org.apache.ibatis.mapping.ParameterMapping;
+import org.apache.ibatis.mapping.SqlCommandType;
+import org.apache.ibatis.mapping.SqlSource;
 import org.apache.ibatis.plugin.Interceptor;
 import org.apache.ibatis.plugin.Intercepts;
 import org.apache.ibatis.plugin.Invocation;
@@ -16,8 +18,16 @@ import org.apache.ibatis.plugin.Signature;
 import org.apache.ibatis.session.ResultHandler;
 import org.apache.ibatis.session.RowBounds;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Properties;
+import java.util.Set;
+import java.util.function.Consumer;
 
 @Intercepts({
         @Signature(type = Executor.class, method = "query", args = {
@@ -26,96 +36,206 @@ import java.util.Properties;
                 MappedStatement.class, Object.class})
 })
 public class AESInterceptor implements Interceptor {
-    private final AESStatementRouter statementRouter = new AESStatementRouter();
-    private final MappedStatementCopier statementCopier = new MappedStatementCopier();
+    private static final Set<String> ADDRESS_BOOK = statements(
+            "com.union.control.mapper.SensitiveDataDemoMapper.insertAddressBook",
+            "com.union.control.mapper.SensitiveDataDemoMapper.queryAddressBook",
+            "com.nucc.channel.ark.dao.mapper.announce.AnnounceAddressBookMapper.getAddressBookPageResult",
+            "com.nucc.channel.ark.dao.mapper.announce.AnnounceAddressBookMapper.queryById",
+            "com.nucc.channel.ark.dao.mapper.announce.AnnounceAddressBookMapper.selectAllUsers",
+            "com.nucc.channel.ark.dao.mapper.announce.AnnounceAddressBookMapper.selectByOrgCodeList",
+            "com.nucc.channel.ark.dao.mapper.announce.AnnounceAddressBookMapper.selectByOrgCodeAndParaList",
+            "com.nucc.channel.ark.dao.mapper.announce.AnnounceAddressBookMapper.getUserEmail",
+            "com.nucc.channel.ark.dao.mapper.announce.AnnounceUserGroupRelationMapper.getAddressMailOfBusinessType",
+            "com.nucc.channel.ark.dao.mapper.announce.AnnounceUserGroupRelationMapper.selectNewUserByGroupId",
+            "com.nucc.channel.ark.dao.mapper.announce.AnnounceAddressBookMapper.queryByUserAccount",
+            "com.nucc.channel.ark.dao.mapper.announce.AnnounceUserGroupRelationMapper.selectUserByGroupId");
+    private static final Set<String> DECRYPT = statements(
+            "com.union.control.mapper.SensitiveDataDemoMapper.query",
+            "com.nucc.channel.ark.dao.mapper.announce.AnnounceAddressBookRecordMapper.selectPageResult",
+            "com.nucc.channel.ark.dao.mapper.announce.ReformTrackMapper.queryReformTrackItemsById",
+            "com.nucc.channel.ark.dao.mapper.announce.ReformTrackMapper.queryReformTrackItemsByConditions",
+            "com.nucc.channel.ark.dao.mapper.announce.QuestionnaireMapper.queryQuestionnaireListByUpdateOrgCodeAndNo",
+            "com.nucc.channel.ark.dao.mapper.announce.QuestionnaireMapper.queryQuestionnaireListByParam",
+            "com.nucc.channel.ark.dao.mapper.announce.AnnounceMailSendMapper.selectAnnounceMailPageResult",
+            "com.nucc.channel.ark.dao.mapper.announce.AnnounceMailSendMapper.queryAnnounceMailSend",
+            "com.nucc.channel.ark.dao.mapper.announce.AnnounceMailSendMapper.getByBatchId",
+            "com.nucc.channel.ark.dao.mapper.announce.AnnounceMailSendMapper.getBy",
+            "com.nucc.channel.ark.dao.mapper.announce.AnnounceMailSendMapper.getById",
+            "com.nucc.channel.ark.dao.mapper.announce.AnnounceMailSendMapper.queryBySeriesNo",
+            "com.nucc.channel.ark.dao.mapper.announce.AnnounceMailSendMapper.queryByIds",
+            "com.nucc.channel.ark.dao.mapper.announce.AnnounceMailSendMapper.queryBySeriesNoS",
+            "com.nucc.channel.ark.dao.mapper.announce.AnnounceMailSendMapper.selectJiraNoticeResult",
+            "com.nucc.channel.ark.dao.mapper.announce.AnnounceMailSendMapper.selectMailList",
+            "com.nucc.channel.ark.dao.mapper.announce.AnnounceMailMapper.selectAnnounceMailPageResult",
+            "com.nucc.channel.ark.dao.mapper.announce.AnnounceMailMapper.queryAnnounceMail",
+            "com.nucc.channel.ark.dao.mapper.announce.AnnounceMailMapper.listBy",
+            "com.nucc.channel.ark.dao.mapper.announce.AnnounceMailMapper.getNormalMail",
+            "com.nucc.channel.ark.dao.mapper.announce.AnnounceMailMapper.checkMail",
+            "com.nucc.channel.ark.dao.mapper.announce.AnnounceMailMapper.getAnnounceMailById",
+            "com.nucc.channel.ark.dao.mapper.announce.AnnounceMailMapper.getAutoAuditPass",
+            "com.nucc.channel.ark.dao.mapper.announce.AnnounceMailMapper.queryBySeriesNos",
+            "com.nucc.channel.ark.dao.mapper.announce.AnnounceMailMapper.queryNoticeExemptionMail",
+            "com.nucc.channel.ark.dao.mapper.announce.AnnounceMailMapper.selectAppealMailPageResult",
+            "com.nucc.channel.ark.dao.mapper.announce.AnnounceMailMapper.selectRelatedInfo",
+            "com.nucc.channel.ark.dao.mapper.announce.AppealMapper.selectAppealPageResult",
+            "com.nucc.channel.ark.dao.mapper.announce.AppealMapper.selectByPrimaryKey",
+            "com.nucc.channel.ark.dao.mapper.announce.AppealMapper.selectProcess",
+            "com.nucc.channel.ark.dao.mapper.announce.TicketMapper.getTicketById",
+            "com.nucc.channel.ark.dao.mapper.announce.TicketMapper.queryTicketListByParamsPageResult",
+            "com.nucc.channel.ark.dao.mapper.announce.TicketMapper.exportTicketListByParams",
+            "com.nucc.channel.ark.dao.mapper.announce.TicketMapper.queryTicketByOrgCode",
+            "com.nucc.channel.ark.dao.mapper.announce.MailDetailMapper.selectByPrimaryKey",
+            "com.nucc.channel.ark.dao.mapper.announce.MailDetailMapper.selectByRecord",
+            "com.nucc.channel.ark.dao.mapper.announce.NotifyMapper.selectPageResult",
+            "com.nucc.channel.ark.dao.mapper.announce.NotifyMapper.queryLastNotify",
+            "com.nucc.channel.ark.dao.mapper.announce.NotifyMapper.queryLastDashBoardNotify");
+    private static final Set<String> ENCRYPT = statements(
+            "com.union.control.mapper.SensitiveDataDemoMapper.insert",
+            "com.nucc.channel.ark.dao.mapper.announce.AnnounceAddressBookRecordMapper.insert",
+            "com.nucc.channel.ark.dao.mapper.announce.ReformTrackMapper.batchInsertReformTrackItems",
+            "com.nucc.channel.ark.dao.mapper.announce.ReformTrackMapper.batchUpdateReformTrackItems",
+            "com.nucc.channel.ark.dao.mapper.announce.QuestionnaireMapper.updateQuestionnaire",
+            "com.nucc.channel.ark.dao.mapper.announce.QuestionnaireMapper.insertBatchQuestionnaireList",
+            "com.nucc.channel.ark.dao.mapper.announce.AnnounceMailSendMapper.insert",
+            "com.nucc.channel.ark.dao.mapper.announce.AnnounceMailSendMapper.insertBatch",
+            "com.nucc.channel.ark.dao.mapper.announce.AnnounceMailMapper.insert",
+            "com.nucc.channel.ark.dao.mapper.announce.AnnounceMailMapper.insertBatch",
+            "com.nucc.channel.ark.dao.mapper.announce.AnnounceMailMapper.batchUpdateMailAudit",
+            "com.nucc.channel.ark.dao.mapper.announce.AnnounceMailMapper.update",
+            "com.nucc.channel.ark.dao.mapper.announce.AppealMapper.insert",
+            "com.nucc.channel.ark.dao.mapper.announce.AppealMapper.insertSelective",
+            "com.nucc.channel.ark.dao.mapper.announce.AppealMapper.updateByPrimaryKeySelective",
+            "com.nucc.channel.ark.dao.mapper.announce.AppealMapper.updateByPrimaryKey",
+            "com.nucc.channel.ark.dao.mapper.announce.TicketMapper.insert",
+            "com.nucc.channel.ark.dao.mapper.announce.MailDetailMapper.insert",
+            "com.nucc.channel.ark.dao.mapper.announce.MailDetailMapper.insertSelective",
+            "com.nucc.channel.ark.dao.mapper.announce.MailDetailMapper.updateByPrimaryKeySelective",
+            "com.nucc.channel.ark.dao.mapper.announce.MailDetailMapper.updateByPrimaryKeyWithBLOBs",
+            "com.nucc.channel.ark.dao.mapper.announce.MailDetailMapper.updateByPrimaryKey",
+            "com.nucc.channel.ark.dao.mapper.announce.NotifyMapper.insert");
 
-    @Autowired(required = false)
-    private SensitiveFieldCodec fieldCodec;
-    @Autowired(required = false)
-    private SensitiveRevealPolicy revealPolicy;
-    @Autowired(required = false)
-    private SensitiveResultProcessor resultProcessor;
-    @Autowired(required = false)
-    private AddressBookHandler addressBookHandler;
+    @Autowired
+    private SensitiveRevealProcessor processor;
+    @Autowired
+    private AddressBookHandler addressBook;
+    @Value("${sensitive.reveal.enabled:false}")
+    private boolean revealEnabled;
 
     public AESInterceptor() {}
 
-    public AESInterceptor(SymmetricalSecurityUtils crypto) {
-        this(crypto, new SensitiveRevealPolicy(false), null,
-                new AddressBookPlaintextPolicy(""));
-    }
-
-    public AESInterceptor(SymmetricalSecurityUtils crypto, SensitiveRevealPolicy revealPolicy,
-                          SensitiveRevealProcessor revealProcessor) {
-        this(crypto, revealPolicy, revealProcessor, new AddressBookPlaintextPolicy(""));
-    }
-
-    public AESInterceptor(SymmetricalSecurityUtils crypto, SensitiveRevealPolicy revealPolicy,
-                          SensitiveRevealProcessor revealProcessor,
-                          AddressBookPlaintextPolicy plaintextPolicy) {
-        SensitiveFieldCodec codec = new SensitiveFieldCodec(crypto);
-        AddressBookHandler handler = new AddressBookHandler(codec, revealProcessor, plaintextPolicy);
-        initialize(codec, revealPolicy,
-                new SensitiveResultProcessor(codec, revealProcessor, handler), handler);
-    }
-
-    public AESInterceptor(SensitiveFieldCodec fieldCodec, SensitiveRevealPolicy revealPolicy,
-                          SensitiveResultProcessor resultProcessor,
-                          AddressBookHandler addressBookHandler) {
-        initialize(fieldCodec, revealPolicy, resultProcessor, addressBookHandler);
-    }
-
-    private void initialize(SensitiveFieldCodec fieldCodec, SensitiveRevealPolicy revealPolicy,
-                            SensitiveResultProcessor resultProcessor,
-                            AddressBookHandler addressBookHandler) {
-        this.fieldCodec = fieldCodec;
-        this.revealPolicy = revealPolicy;
-        this.resultProcessor = resultProcessor;
-        this.addressBookHandler = addressBookHandler;
+    AESInterceptor(SensitiveRevealProcessor processor, AddressBookHandler addressBook,
+                   boolean revealEnabled) {
+        this.processor = processor;
+        this.addressBook = addressBook;
+        this.revealEnabled = revealEnabled;
     }
 
     @Override
     public Object intercept(Invocation invocation) throws Throwable {
         MappedStatement statement = (MappedStatement) invocation.getArgs()[0];
-        StatementRoute route = statementRouter.resolve(statement.getId());
-        if (route == StatementRoute.PASSTHROUGH) return invocation.proceed();
+        if (ADDRESS_BOOK.contains(statement.getId())) {
+            return interceptAddressBook(invocation, statement);
+        }
 
-        requireDependencies();
-        boolean revealEnabled = revealPolicy.isEnabled();
-        resultProcessor.validate(route, revealEnabled);
-        prepareInvocation(invocation, statement, route);
-
+        boolean encrypt = ENCRYPT.contains(statement.getId());
+        if (!encrypt && !DECRYPT.contains(statement.getId())) return invocation.proceed();
+        if (!interceptorEnabled(statement.getId())) return invocation.proceed();
+        requireProcessor();
+        if (encrypt) {
+            processor.encrypt(invocation.getArgs()[1]);
+            return invocation.proceed();
+        }
+        Object parameter = invocation.getArgs()[1];
+        if (statement.isUseCache()) {
+            invocation.getArgs()[0] = copy(statement, parameter,
+                    statement.getBoundSql(parameter).getSql());
+        }
         try {
             Object result = invocation.proceed();
-            return resultProcessor.process(route, result, revealEnabled);
+            if (result == null) return null;
+            if (revealEnabled) processor.process(result);
+            else processor.decrypt(result);
+            return result;
         } finally {
-            if (route.hasSensitiveResult()) {
-                ((Executor) invocation.getTarget()).clearLocalCache();
-            }
+            ((Executor) invocation.getTarget()).clearLocalCache();
         }
     }
 
-    private void prepareInvocation(Invocation invocation, MappedStatement statement,
-                                   StatementRoute route) throws CheckException {
-        Object parameter = invocation.getArgs()[1];
-        if (route == StatementRoute.ENCRYPT) {
-            fieldCodec.encrypt(parameter);
-        } else if (route == StatementRoute.DECRYPT) {
-            invocation.getArgs()[0] = statementCopier.disableCache(statement, parameter);
-        } else if (route == StatementRoute.ADDRESS_BOOK) {
-            invocation.getArgs()[0] = addressBookHandler.prepare(statement, parameter);
+    private Object interceptAddressBook(Invocation invocation, MappedStatement statement)
+            throws Throwable {
+        requireAddressBook();
+        invocation.getArgs()[0] = addressBook.prepare(statement, invocation.getArgs()[1]);
+        if (statement.getSqlCommandType() != SqlCommandType.SELECT) return invocation.proceed();
+        try {
+            Object result = invocation.proceed();
+            if (result != null) addressBook.processResult(result, revealEnabled);
+            return result;
+        } finally {
+            ((Executor) invocation.getTarget()).clearLocalCache();
         }
     }
 
-    private void requireDependencies() {
-        if (fieldCodec == null || revealPolicy == null || resultProcessor == null
-                || addressBookHandler == null) {
+    private void requireProcessor() {
+        if (processor == null) {
             throw new IllegalStateException("AESInterceptor sensitive dependencies are not configured");
         }
     }
 
-    public static boolean isRevealEligibleStatement(String statementId) {
-        return AESStatementRouter.isSensitiveQuery(statementId);
+    private void requireAddressBook() {
+        if (addressBook == null) {
+            throw new IllegalStateException("AESInterceptor sensitive dependencies are not configured");
+        }
+    }
+
+    private static boolean interceptorEnabled(String statementId) {
+        Object configured = Constant.flagMap.get("interceptorItems");
+        List<String> items = Arrays.asList(Constant.INTERCEPTOR_ITEMS.split(","));
+        if (!Constant.flagMap.isEmpty() && configured != null) {
+            items = JSON.parseObject(configured.toString(),
+                    new TypeReference<ArrayList<String>>() {});
+        }
+        if (items == null) return false;
+        for (String item : items) {
+            if (!item.isEmpty() && statementId.contains(item)) return true;
+        }
+        return false;
+    }
+
+    static MappedStatement copy(MappedStatement statement, Object parameter, String sql) {
+        BoundSql source = statement.getBoundSql(parameter);
+        if (sql.equals(source.getSql()) && !statement.isUseCache()) return statement;
+        BoundSql boundSql = new BoundSql(statement.getConfiguration(), sql,
+                source.getParameterMappings(), parameter);
+        for (ParameterMapping mapping : source.getParameterMappings()) {
+            String property = mapping.getProperty();
+            if (source.hasAdditionalParameter(property)) {
+                boundSql.setAdditionalParameter(property, source.getAdditionalParameter(property));
+            }
+        }
+        MappedStatement.Builder builder = new MappedStatement.Builder(statement.getConfiguration(),
+                statement.getId(), new FixedSqlSource(boundSql), statement.getSqlCommandType());
+        builder.resource(statement.getResource());
+        builder.fetchSize(statement.getFetchSize());
+        builder.statementType(statement.getStatementType());
+        builder.keyGenerator(statement.getKeyGenerator());
+        joined(statement.getKeyProperties(), builder::keyProperty);
+        joined(statement.getKeyColumns(), builder::keyColumn);
+        joined(statement.getResultSets(), builder::resultSets);
+        builder.timeout(statement.getTimeout());
+        builder.parameterMap(statement.getParameterMap());
+        builder.resultMaps(statement.getResultMaps());
+        builder.resultSetType(statement.getResultSetType());
+        builder.cache(statement.getCache());
+        builder.flushCacheRequired(statement.isFlushCacheRequired());
+        builder.useCache(false);
+        builder.resultOrdered(statement.isResultOrdered());
+        builder.databaseId(statement.getDatabaseId());
+        builder.lang(statement.getLang());
+        return builder.build();
+    }
+
+    private static void joined(String[] values, Consumer<String> setter) {
+        if (values != null && values.length > 0) setter.accept(String.join(",", values));
     }
 
     @Override
@@ -125,4 +245,14 @@ public class AESInterceptor implements Interceptor {
 
     @Override
     public void setProperties(Properties properties) {}
+
+    private static Set<String> statements(String... values) {
+        return Collections.unmodifiableSet(new LinkedHashSet<>(Arrays.asList(values)));
+    }
+
+    private static final class FixedSqlSource implements SqlSource {
+        private final BoundSql boundSql;
+        private FixedSqlSource(BoundSql boundSql) { this.boundSql = boundSql; }
+        @Override public BoundSql getBoundSql(Object parameterObject) { return boundSql; }
+    }
 }

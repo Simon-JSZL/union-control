@@ -6,10 +6,12 @@ import com.union.control.utils.security.SymmetricalSecurityUtils;
 import com.union.control.utils.ServiceSupport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
 
 import java.util.Map;
 import java.util.regex.Pattern;
 
+@Service
 public final class SensitiveRevealService {
     private static final Logger LOG = LoggerFactory.getLogger(SensitiveRevealService.class);
     private static final Pattern TOKEN = Pattern.compile("rt_[A-Za-z0-9_-]{43}");

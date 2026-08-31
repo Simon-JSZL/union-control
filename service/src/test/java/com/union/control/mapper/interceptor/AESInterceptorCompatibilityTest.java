@@ -9,8 +9,6 @@ import com.nucc.channel.ark.common.util.ResultUtil;
 import com.nucc.channel.ark.common.util.Constant;
 import com.union.control.utils.security.SymmetricalSecurityUtils;
 import com.union.control.service.sensitive.RedisRevealTokenStore;
-import com.union.control.service.sensitive.AddressBookPlaintextPolicy;
-import com.union.control.service.sensitive.SensitiveRevealPolicy;
 import com.union.control.service.sensitive.SensitiveRevealProcessor;
 import org.apache.ibatis.builder.StaticSqlSource;
 import org.apache.ibatis.executor.Executor;
@@ -37,6 +35,7 @@ import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Matchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -48,6 +47,14 @@ public class AESInterceptorCompatibilityTest {
             "com.nucc.channel.ark.dao.mapper.announce.AnnounceAddressBookRecordMapper.insert";
     private static final String DECRYPT_QUERY =
             "com.nucc.channel.ark.dao.mapper.announce.AnnounceAddressBookRecordMapper.selectPageResult";
+    private static final String DEMO_INSERT =
+            "com.union.control.mapper.SensitiveDataDemoMapper.insert";
+    private static final String DEMO_QUERY =
+            "com.union.control.mapper.SensitiveDataDemoMapper.query";
+    private static final String ADDRESS_BOOK_DEMO_INSERT =
+            "com.union.control.mapper.SensitiveDataDemoMapper.insertAddressBook";
+    private static final String ADDRESS_BOOK_DEMO_QUERY =
+            "com.union.control.mapper.SensitiveDataDemoMapper.queryAddressBook";
 
     @After
     public void resetFlags() {
@@ -113,6 +120,62 @@ public class AESInterceptorCompatibilityTest {
     }
 
     @Test
+    public void demoStatementsEncryptWritesAndDecryptQueries() throws Throwable {
+        Executor executor = mock(Executor.class);
+        Contact parameter = new Contact("13800138000");
+        MappedStatement insert = statement(DEMO_INSERT, SqlCommandType.INSERT,
+                "insert into sensitive_data_demo.sensitive_data_demo(phone_number) values (?)");
+        when(executor.update(any(MappedStatement.class), any())).thenReturn(1);
+
+        interceptor().intercept(updateInvocation(executor, insert, parameter));
+
+        String ciphertext = Base64.getEncoder().encodeToString(
+                "enc:13800138000".getBytes(StandardCharsets.UTF_8));
+        assertEquals(ciphertext, parameter.mobile);
+
+        Contact row = new Contact(ciphertext);
+        MappedStatement query = statement(DEMO_QUERY, SqlCommandType.SELECT,
+                "select phone_number from sensitive_data_demo.sensitive_data_demo");
+        when(executor.query(any(MappedStatement.class), any(), any(RowBounds.class),
+                any(ResultHandler.class))).thenReturn((List) Collections.singletonList(row));
+
+        interceptor().intercept(queryInvocation(executor, query, null));
+
+        assertEquals("13800138000", row.mobile);
+    }
+
+    @Test
+    public void addressBookDemoRouteStaysNarrowAndRewritesWrites() throws Throwable {
+        Executor bypass = mock(Executor.class);
+        Contact untouched = new Contact("13800138000");
+        MappedStatement unexpected = statement(ADDRESS_BOOK_DEMO_QUERY + "Unexpected",
+                SqlCommandType.INSERT, "insert into t_m_announce_address_book values (?)");
+        when(bypass.update(unexpected, untouched)).thenReturn(1);
+
+        interceptor().intercept(updateInvocation(bypass, unexpected, untouched));
+
+        assertEquals("13800138000", untouched.mobile);
+        verify(bypass).update(unexpected, untouched);
+
+        Executor executor = mock(Executor.class);
+        Contact parameter = new Contact("13800138000");
+        MappedStatement insert = statement(ADDRESS_BOOK_DEMO_INSERT, SqlCommandType.INSERT,
+                "insert into t_m_announce_address_book(mobile_number) values (?)");
+        when(executor.update(any(MappedStatement.class), any())).thenReturn(1);
+
+        interceptor().intercept(updateInvocation(executor, insert, parameter));
+
+        assertEquals(Base64.getEncoder().encodeToString(
+                "enc:13800138000".getBytes(StandardCharsets.UTF_8)), parameter.mobile);
+        org.mockito.ArgumentCaptor<MappedStatement> captured =
+                org.mockito.ArgumentCaptor.forClass(MappedStatement.class);
+        verify(executor).update(captured.capture(), any());
+        assertTrue(captured.getValue().getBoundSql(parameter).getSql()
+                .contains("t_m_announce_address_book_new"));
+        verify(executor, never()).clearLocalCache();
+    }
+
+    @Test
     public void pluginOnlyWrapsExecutors() {
         AESInterceptor interceptor = interceptor();
         Object other = new Object();
@@ -131,9 +194,9 @@ public class AESInterceptorCompatibilityTest {
         PrefixGateway gateway = new PrefixGateway();
         SymmetricalSecurityUtils crypto = new SymmetricalSecurityUtils(gateway);
         RecordingStore store = new RecordingStore();
-        AESInterceptor interceptor = new AESInterceptor(crypto,
-                new SensitiveRevealPolicy(true),
-                new SensitiveRevealProcessor(crypto, new RedisRevealTokenStore(store, 300)));
+        SensitiveRevealProcessor processor =
+                new SensitiveRevealProcessor(crypto, new RedisRevealTokenStore(store, 300));
+        AESInterceptor interceptor = interceptor(processor, true, "");
         Executor executor = mock(Executor.class);
         MappedStatement statement = cachedStatement(OLD_QUERY, "select * from demo");
         Contact row = new Contact(crypto.encryptWithCheck("13800138000"));
@@ -158,9 +221,9 @@ public class AESInterceptorCompatibilityTest {
         PrefixGateway gateway = new PrefixGateway();
         SymmetricalSecurityUtils crypto = new SymmetricalSecurityUtils(gateway);
         RecordingStore store = new RecordingStore();
-        AESInterceptor interceptor = new AESInterceptor(crypto,
-                new SensitiveRevealPolicy(true),
-                new SensitiveRevealProcessor(crypto, new RedisRevealTokenStore(store, 300)));
+        SensitiveRevealProcessor processor =
+                new SensitiveRevealProcessor(crypto, new RedisRevealTokenStore(store, 300));
+        AESInterceptor interceptor = interceptor(processor, true, "");
         Executor executor = mock(Executor.class);
         MappedStatement statement = cachedStatement(DECRYPT_QUERY, "select * from demo");
         Contact row = new Contact(crypto.encryptWithCheck("13800138000"));
@@ -196,10 +259,9 @@ public class AESInterceptorCompatibilityTest {
         PrefixGateway gateway = new PrefixGateway();
         SymmetricalSecurityUtils crypto = new SymmetricalSecurityUtils(gateway);
         RecordingStore store = new RecordingStore();
-        AESInterceptor interceptor = new AESInterceptor(crypto,
-                new SensitiveRevealPolicy(true),
-                new SensitiveRevealProcessor(crypto, new RedisRevealTokenStore(store, 300)),
-                new AddressBookPlaintextPolicy("001,002"));
+        SensitiveRevealProcessor processor =
+                new SensitiveRevealProcessor(crypto, new RedisRevealTokenStore(store, 300));
+        AESInterceptor interceptor = interceptor(processor, true, "001,002");
         Executor executor = mock(Executor.class);
         MappedStatement statement = statement(OLD_QUERY, SqlCommandType.SELECT,
                 "select * from t_m_announce_address_book");
@@ -218,6 +280,12 @@ public class AESInterceptorCompatibilityTest {
         assertEquals("13800138000", plaintext.mobile);
         assertTrue(masked.mobile.matches("\\[#139\\*{4}9000#VIEW:rt_[A-Za-z0-9_-]{43}\\]"));
         assertEquals(1, store.values.size());
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void invalidAddressBookRoleConfigurationFailsClosed() {
+        SymmetricalSecurityUtils crypto = new SymmetricalSecurityUtils(new PrefixGateway());
+        new AddressBookHandler(new SensitiveRevealProcessor(crypto, null), "001,*");
     }
 
     @Test
@@ -259,7 +327,14 @@ public class AESInterceptorCompatibilityTest {
     }
 
     private static AESInterceptor interceptor() {
-        return new AESInterceptor(new SymmetricalSecurityUtils(new PrefixGateway()));
+        return interceptor(new SensitiveRevealProcessor(
+                new SymmetricalSecurityUtils(new PrefixGateway()), null), false, "");
+    }
+
+    private static AESInterceptor interceptor(SensitiveRevealProcessor processor,
+                                              boolean revealEnabled, String plaintextRoles) {
+        return new AESInterceptor(processor,
+                new AddressBookHandler(processor, plaintextRoles), revealEnabled);
     }
 
     private static MappedStatement statement(String id, SqlCommandType command, String sql) {

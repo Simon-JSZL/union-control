@@ -201,7 +201,9 @@ The scheduled-task flow is:
    idempotently creates one normal AG-UI conversation with exactly two trusted
    messages: the task prompt as the user message and the stored final content
    as the assistant message. It marks the result read and returns the existing
-   conversation on repeated opens.
+   conversation on repeated opens. Deleting that materialized conversation also
+   logically deletes its claimed run record, so run history never links to a
+   deleted conversation.
 
 Only the successful result's `content` and `agentName` fields are persisted.
 Provider messages and unknown response fields are discarded at the control

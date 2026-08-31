@@ -74,6 +74,7 @@ public class ScheduledTaskService {
         requireTaskOwner(taskId, userId, true);
         Map<String, Object> task = taskDefinition(payload, userId);
         task.put("taskId", taskId);
+        task.put("orgCode", ServiceSupport.identity(payload, "orgCode"));
         task.put("roleId", ServiceSupport.identity(payload, "roleId"));
         if (mapper.updateTask(task) != 1) throw new NotFoundException("定时任务不存在");
         return detailForUser(taskId, userId);
@@ -212,14 +213,6 @@ public class ScheduledTaskService {
         identityValue(string(context, "orgCode"), "orgCode");
         identityValue(string(context, "roleId"), "roleId");
         return mapper.beginRun(runId, identityValue(tokenHash, "tokenHash"), expiresAt) == 1;
-    }
-
-    public Map<String, Object> executionContext(long runId) {
-        Map<String, Object> row = mapper.findRunContext(runId);
-        if (row == null) throw new NotFoundException("运行记录不存在或不可执行");
-        String owner = string(row, "userId");
-        if (owner == null || owner.trim().isEmpty()) throw new DataCorruptionException();
-        return row;
     }
 
     @Transactional

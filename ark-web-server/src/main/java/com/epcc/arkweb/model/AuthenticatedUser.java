@@ -1,6 +1,6 @@
 package com.epcc.arkweb.model;
 
-public final class AuthenticatedUser extends ShiroUser implements TrustedPrincipal {
+public final class AuthenticatedUser extends ShiroUser {
     private final String userId;
     private final String orgCode;
     private final String roleId;

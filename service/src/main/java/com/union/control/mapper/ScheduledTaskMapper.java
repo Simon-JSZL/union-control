@@ -71,8 +71,6 @@ public interface ScheduledTaskMapper {
                  @Param("tokenHash") String tokenHash,
                  @Param("tokenExpiresAt") String tokenExpiresAt);
 
-    Map<String, Object> findRunContext(@Param("runId") long runId);
-
     Map<String, Object> findPendingRunContext(@Param("runId") long runId);
 
     Map<String, Object> findScheduledIdentity(@Param("tokenHash") String tokenHash);
@@ -91,5 +89,8 @@ public interface ScheduledTaskMapper {
 
     int attachConversation(@Param("runId") long runId,
                            @Param("conversationId") String conversationId);
+
+    int softDeleteByConversation(@Param("conversationId") String conversationId,
+                                 @Param("userId") String userId);
 
 }

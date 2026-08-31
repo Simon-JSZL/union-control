@@ -7,40 +7,37 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nucc.channel.ark.common.exception.BaseDataErrorCode;
 import com.nucc.channel.ark.common.exception.CheckException;
 import com.nucc.channel.ark.common.redis.RedisCacheService;
+import com.union.control.mapper.interceptor.AESInterceptor;
 import com.union.control.utils.security.SymmetricalSecurityUtils;
 import org.junit.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.AutowiredAnnotationBeanPostProcessor;
 
 import java.nio.charset.StandardCharsets;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
 public class SensitiveRevealBoundaryTest {
     @Test
-    public void policyIsAGlobalOutputModeForSensitiveQueries() {
-        assertFalse(new SensitiveRevealPolicy(false).isEnabled());
-        assertTrue(new SensitiveRevealPolicy(true).isEnabled());
+    public void springSelectsTheSensitiveRevealProcessorProductionConstructor() {
+        java.lang.reflect.Constructor<?>[] constructors =
+                new AutowiredAnnotationBeanPostProcessor().determineCandidateConstructors(
+                        SensitiveRevealProcessor.class, "sensitiveRevealProcessor");
+
+        assertNotNull(constructors);
+        assertEquals(1, constructors.length);
+        assertEquals(2, constructors[0].getParameterTypes().length);
     }
 
     @Test
-    public void addressBookPlaintextRolesAreExactAndFailClosed() {
-        AddressBookPlaintextPolicy policy = new AddressBookPlaintextPolicy("001, 002");
-        assertTrue(policy.allowPlaintext(new AddressBookRow("001")));
-        assertTrue(policy.allowPlaintext(new AddressBookRow("002")));
-        assertFalse(policy.allowPlaintext(new AddressBookRow("003")));
-        assertFalse(policy.allowPlaintext(new AddressBookRow(null)));
-    }
-
-    @Test
-    public void emptyAddressBookRoleConfigurationAllowsNoPlaintext() {
-        assertFalse(new AddressBookPlaintextPolicy("")
-                .allowPlaintext(new AddressBookRow("001")));
-    }
-
-    @Test(expected = IllegalArgumentException.class)
-    public void invalidAddressBookRoleConfigurationFailsAtStartup() {
-        new AddressBookPlaintextPolicy("001,*");
+    public void sensitiveInterceptorDependenciesAreRequired() throws Exception {
+        assertTrue(AESInterceptor.class.getDeclaredField("processor")
+                .getAnnotation(Autowired.class).required());
+        assertTrue(AESInterceptor.class.getDeclaredField("addressBook")
+                .getAnnotation(Autowired.class).required());
     }
 
     @Test
@@ -97,18 +94,6 @@ public class SensitiveRevealBoundaryTest {
             }
             return Result.success(new SecurityResult(
                     java.util.Arrays.copyOfRange(ciphertext, 4, ciphertext.length)));
-        }
-    }
-
-    static class AddressBookRow {
-        private final String role;
-
-        AddressBookRow(String role) {
-            this.role = role;
-        }
-
-        public String getRole() {
-            return role;
         }
     }
 }

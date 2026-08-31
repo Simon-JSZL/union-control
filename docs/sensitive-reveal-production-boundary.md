@@ -18,7 +18,12 @@ the existing `@Resource(name = "sensitiveProxy") SymmetricalSecurityService` bou
 
 ## New production files
 
-- reveal policy, processor, token-store, service, controller, exception mapping, and wiring
+- reveal processor, token store, service, controller, and exception mapping
+
+The production data path is intentionally limited to five Java files: the interceptor,
+AddressBook branch, reveal processor, Redis token store, and reveal service. Routing, statement
+copying, field transformation, role parsing, and property injection stay with those owners instead
+of introducing one-implementation policy or wiring classes.
 
 The token store delegates to the existing production `RedisCacheService` contract (`setex` and
 `get`). The service does not expose a batch API, so the adapter cannot claim pipeline semantics;
@@ -39,7 +44,7 @@ production file boundary.
 - `com/union/control/local/sensitive/LocalRedisCacheService.java`
 - local compatibility copies under `com/epcc/commons/securityproxy`, `com/epcc/dubbo/result`,
   and the unchanged production annotation/constant/exception contracts copied into this mock
-- `application-local-sensitive-mock.properties`
+- `application.properties`
 
 Those sources live under `service/src/local-mock/java` and are added only by the
 `local-sensitive-compat` Maven profile. The local profile also owns the mock app's interceptor

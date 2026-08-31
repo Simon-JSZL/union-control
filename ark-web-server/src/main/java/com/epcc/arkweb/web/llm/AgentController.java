@@ -142,6 +142,7 @@ public class AgentController {
         data.put("taskId", principal.getTaskId());
         data.put("userId", principal.getLoginName());
         data.put("orgCode", principal.getOrgCode());
+        data.put("roleId", principal.getRoleId());
         data.put("prompt", principal.getPrompt());
         data.put("scheduledAt", principal.getScheduledAt().toString());
         data.put("timezone", principal.getTimezone());

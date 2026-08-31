@@ -54,7 +54,7 @@
 
     <update id="updateTask" parameterType="map">
         UPDATE agent_scheduled_task
-        SET role_id=#{roleId},title=#{title},prompt=#{prompt},schedule_type=#{scheduleType},run_at=#{runAt},
+        SET org_code=#{orgCode},role_id=#{roleId},title=#{title},prompt=#{prompt},schedule_type=#{scheduleType},run_at=#{runAt},
             cron_expression=#{cronExpression},interval_seconds=#{intervalSeconds},timezone=#{timezone},
             next_run_at=CASE WHEN status='ACTIVE' THEN #{nextRunAt} ELSE NULL END,
             updated_at=UTC_TIMESTAMP(3)
@@ -205,15 +205,6 @@
                       WHERE t.id=agent_scheduled_task_run.task_id AND t.delete_flag=1)
     </update>
 
-    <select id="findRunContext" resultType="map">
-        SELECT r.id AS runId,r.task_id AS taskId,t.user_id AS userId,t.org_code AS orgCode,
-               t.title,t.prompt,t.timezone,
-               DATE_FORMAT(r.scheduled_at,'%Y-%m-%dT%H:%i:%s.%fZ') AS scheduledAt
-        FROM agent_scheduled_task_run r
-        JOIN agent_scheduled_task t ON t.id=r.task_id
-        WHERE r.id=#{runId} AND r.delete_flag=1 AND r.status='RUNNING' AND t.delete_flag=1
-    </select>
-
     <select id="findPendingRunContext" resultType="map">
         SELECT r.id AS runId,r.task_id AS taskId,t.user_id AS userId,t.org_code AS orgCode,
                t.role_id AS roleId
@@ -282,6 +273,14 @@
         UPDATE agent_scheduled_task_run
         SET result_conversation_id=#{conversationId},read_flag=1,updated_at=UTC_TIMESTAMP(3)
         WHERE id=#{runId} AND result_conversation_id IS NULL
+    </update>
+
+    <update id="softDeleteByConversation">
+        UPDATE agent_scheduled_task_run r
+        JOIN agent_scheduled_task t ON t.id=r.task_id
+        SET r.delete_flag=0,r.updated_at=UTC_TIMESTAMP(3)
+        WHERE r.result_conversation_id=#{conversationId} AND r.delete_flag=1
+          AND t.user_id=#{userId} AND t.delete_flag=1
     </update>
 
 </mapper>
