@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xmlns:dubbo="http://code.alibabatech.com/schema/dubbo"
+       xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd
+                           http://code.alibabatech.com/schema/dubbo http://code.alibabatech.com/schema/dubbo/dubbo.xsd">
+    <dubbo:application name="${dubbo.application.name}"/>
+    <dubbo:registry address="${dubbo.registry.address}"/>
+    <dubbo:consumer timeout="${dubbo.consumer.timeout-ms}" retries="0"/>
+
+    <dubbo:reference id="agentExecutionService" interface="com.union.control.service.AgentExecutionService" check="${dubbo.consumer.check}" url="${dubbo.consumer.direct-url}"/>
+    <dubbo:reference id="agentProxyService" interface="com.union.control.service.AgentProxyService" check="${dubbo.consumer.check}" url="${dubbo.consumer.direct-url}" timeout="120000"/>
+    <dubbo:reference id="conversationService" interface="com.union.control.service.ConversationService" check="${dubbo.consumer.check}" url="${dubbo.consumer.direct-url}"/>
+    <dubbo:reference id="memoryStoreService" interface="com.union.control.service.MemoryStoreService" check="${dubbo.consumer.check}" url="${dubbo.consumer.direct-url}"/>
+    <dubbo:reference id="runningAnalysisMockService" interface="com.union.control.service.RunningAnalysisMockService" check="${dubbo.consumer.check}" url="${dubbo.consumer.direct-url}"/>
+    <dubbo:reference id="scheduledTaskService" interface="com.union.control.service.ScheduledTaskService" check="${dubbo.consumer.check}" url="${dubbo.consumer.direct-url}"/>
+    <dubbo:reference id="sensitiveDataDemoService" interface="com.union.control.service.SensitiveDataDemoService" check="${dubbo.consumer.check}" url="${dubbo.consumer.direct-url}"/>
+    <dubbo:reference id="sensitiveRevealService" interface="com.union.control.service.sensitive.SensitiveRevealService" check="${dubbo.consumer.check}" url="${dubbo.consumer.direct-url}"/>
+</beans>

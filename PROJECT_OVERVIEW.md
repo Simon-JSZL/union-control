@@ -9,10 +9,16 @@ with this contract is technical debt to remove, not a precedent to copy.
 
 ### Web authentication and JSON-only service boundary
 
-- `ark-web-server` is the simulated browser-facing Web application and owns all
-  Shiro/CAS authentication, authorization annotations, identity models, filters,
-  realms, and scheduled-execution authentication adapters.
-- `service` is a trusted, non-public backend module. Business services must not
+- `ark-web` is merged into the existing production Web application. Browser
+  routes reuse its existing Shiro/CAS implementation and authorization annotations.
+  The standalone build mirrors the production `ShiroConfig`, `Realm`,
+  `LoginFormFilter`, and `InterceptorConfig` names and lifecycle; only the
+  external `arkAuthService` bean is replaced under `src/local-mock/java`.
+  The production-overlay copies of both filter-chain configurations delegate
+  only `/agent/**` to the Agent guard with `anon` before their catch-all `authc`.
+  They replace the matching production files during integration; runtime source
+  must not define another Realm, Shiro configuration, CAS token, or authentication filter.
+- `ark-control` is a trusted, independently deployed Dubbo provider. Business services must not
   read Shiro subjects, cookies, thread-local authentication, or call helpers such
   as `currentUserId()`. The module has no Shiro dependency.
 - After Web authentication succeeds, `AuthenticatedRequest` overwrites any
@@ -21,8 +27,8 @@ with this contract is technical debt to remove, not a precedent to copy.
 - User-facing business service methods accept that JSON string, parse and validate
   it, then pass the parsed values to their mapper. Mapper ownership predicates
   continue to use `userId`; the service trusts the Web boundary that supplied it.
-- Background scheduler mechanics that create or consume authentication credentials
-  live in `ark-web-server`. Backend-only scheduling state transitions may keep
+- Background scheduler mechanics that create or consume execution credentials
+  live in `ark-control`. Backend-only scheduling state transitions may keep
   typed internal method parameters because they are not public request inputs.
 
 ### One browser-to-Agent gateway
@@ -59,16 +65,18 @@ with this contract is technical debt to remove, not a precedent to copy.
 ### Preserve one identity and tool path
 
 - The Web application authenticates interactive execution and forwards the
-  validated CAS cookie unchanged. Scheduled
-  execution uses a separate single-occurrence, short-lived, sessionless token;
-  Control stores only its SHA-256 hash and restores the task's trusted
-  `userId + orgCode + roleId` snapshot through Shiro on every request.
+  validated CAS cookie unchanged. Scheduled execution uses a separate
+  single-occurrence, short-lived, sessionless token; Control stores only its
+  SHA-256 hash and never constructs a Shiro identity for it.
 - Scheduled traffic carries only `Authorization: Scheduled <token>`. It enters
-  py through `/agent/v1/runs/scheduled`, introspects via
-  `/agent/scheduledExecutionIdentity`, and returns the same token to existing
-  `/agent/*` tools. It never derives a Cookie, sends identity fields, or creates
-  Tool replicas. This is an authentication adapter around the same execution
-  kernel, not a second Agent execution plane.
+  py through `/agent/v1/runs/scheduled`, then calls
+  `/agent/scheduledTaskAuthorize`. Web resolves the active run through Control,
+  calls the production `arkAuthService.queryResource` bean with the
+  stored role ID, and requires `/assistantManager/page`. The response includes
+  a database-backed trusted context for subsequent Agent tools. Those tools must
+  use `X-Agent-Trusted-Context`; the raw scheduled bearer is not accepted on a
+  tool route. The non-Shiro guard re-resolves the run and live resources for
+  every tool call and never constructs a Subject.
 - Each business tool has one control endpoint and one authorization
   implementation. Scenario-prefixed clones are forbidden.
 
@@ -85,17 +93,17 @@ shared route and shared identity/tool path, and reviewers must reject violations
 even when isolated feature tests pass.
 
 Java sources follow the production project's responsibility-based packages:
-MyBatis interfaces in `mapper`, application services in `service`, timer
-entrypoints in `ark-web-server`'s `com.epcc.arkweb.schedule` package, Realm and
-Shiro configuration in `config`, filters in `filter`, identity models in
-`model`, and authentication tokens in `security`.
+MyBatis interfaces, application services, and timer entrypoints live in
+`ark-control`; the Agent-only guard stays beside `AgentController`. Production
+Shiro configuration, filters, Realm, and identity model are reused as-is.
 Scheduled-task code must not introduce a parallel domain package containing its
 own mapper, service, Web facade, production-authentication wrapper, or local mock.
 
 ## Purpose
 
-`ark-web-server` is the browser-facing control plane for the PydanticAI service;
-`service` is its trusted mock backend. Together they own authenticated
+`ark-web` is the browser-facing control plane for the PydanticAI service;
+`ark-control` is its trusted Dubbo provider, and `ark-control-facade` is their
+shared serializable contract. Together they own authenticated
 conversation/run state, standard AG-UI message
 persistence, the official Memory store protocol adapter, and transparent AG-UI
 SSE proxying.
@@ -106,8 +114,9 @@ SSE proxying.
 - Spring Boot 1.5
 - MySQL 8
 - Browser APIs remain under `/llm/**`
-- Internal py-app APIs remain under `/agent/**` and validate the CAS session
-  obtained by control
+- Internal py-app APIs remain under `/agent/**`; they must not move under the
+  production-anonymous `/api/**` namespace. Interactive calls validate the CAS
+  session and scheduled calls use the dedicated token/context guard.
 
 Only GET and POST endpoints are used in production.
 
@@ -186,16 +195,16 @@ The scheduled-task flow is:
    enqueue the consumed occurrence again.
 2. Pending runs are moved to `RUNNING` and submitted to a bounded worker pool.
    Control loads the prompt, owner, role, timezone, and effective occurrence
-   time, atomically issues a token, and calls py's scheduled authentication
-   adapter with `{}`. The Scheduled Realm restores the trusted
-   `userId + orgCode + roleId` as the existing production `ShiroUser` shape.
-   The existing production Realm remains the only role-resource and
-   authorization owner; no permission-provider wrapper or permission snapshot
-   is added by this feature. Existing `@RequiresPermissions` annotations remain
-   the only mapping from a tool API to its page-level permission; py does not
-   perform a second permission decision.
+   time, atomically issues a token, and calls py's scheduled execution endpoint
+   with `{}`. Control stores only the token hash and makes no permission
+   decision. Web's `/agent/scheduledTaskAuthorize` resolves the run, calls the
+   production `arkAuthService.queryResource` bean, and requires the
+   exact `/assistantManager/page` resource. Agent tools then use a non-Shiro
+   `@AgentPermission` guard with the returned trusted context; browser/CAS
+   requests continue to use the production Shiro Subject.
 3. Every terminal run is unread until opened. Successful py-app content is
-   stored as bounded JSON; failed runs retain only a fixed safe error. Neither
+   stored as bounded JSON; failed runs retain a bounded, structured, user-safe
+   error code and message supplied by py-app. Neither
    creates a conversation in the background.
 4. `scheduledTaskRunOpen` verifies the browser owner and locks the run. It
    idempotently creates one normal AG-UI conversation with exactly two trusted
@@ -207,8 +216,9 @@ The scheduled-task flow is:
 
 Only the successful result's `content` and `agentName` fields are persisted.
 Provider messages and unknown response fields are discarded at the control
-boundary, and failed callbacks store a fixed user-safe message rather than an
-upstream error body. Opening either terminal state creates the same standard
+boundary. Failed callbacks accept only bounded error codes and single-line
+user-safe messages produced by py-app; raw upstream bodies, stack traces, and
+credentials are never persisted. Opening either terminal state creates the same standard
 two-message conversation, so users can follow up on a result or a failure.
 
 Every logical delete sets `delete_flag=0`; active rows use
@@ -217,21 +227,28 @@ migrated or retained because the feature was not released.
 
 ## Security
 
-- `ark-web-server` authenticates browser and Agent callers before creating the
-  JSON string passed to `service`; `service` performs no authentication or
-  permission decision of its own.
+- `ark-web` authenticates browser callers before creating the JSON string passed
+  to `ark-control`; `ark-control` performs no authentication or permission
+  decision of its own, including while scheduling.
 - Scheduled-task browser routes authenticate the caller's same-origin
   `CASSESSIONID`; the controller never substitutes a synthetic browser identity.
-  Apache Shiro enforces `@RequiresPermissions("agent:execute")` on every
-  CAS-protected API. Local development maps the fixed session to that permission
-  through the `LocalCasRealm` development adapter.
-  Production must replace that adapter with the real authentication-service
-  integration before enabling this feature.
+  Apache Shiro enforces `@RequiresPermissions("/assistantManager/page")` on every
+  CAS-protected API. The explicit `local-auth-mock` profile exercises the same
+  Filter/Realm/Subject path and mocks only the Realm's auth-service dependency;
+  production continues to use its unchanged Realm and Shiro configuration.
 - Normal Agent, tool, history, completion, cancellation, sync, and Memory calls
   forward and validate that `CASSESSIONID`.
 - Scheduled execution has no browser session and must not derive or fabricate a
-  CAS Cookie from the task owner. Its Shiro Subject is reconstructed from the
-  active RUNNING occurrence token without Session or Realm caches.
+  CAS Cookie from the task owner. Its token is checked against the active
+  RUNNING occurrence in Control; Agent tools use only the trusted context
+  returned by the dedicated authorization endpoint, recheck live resources, and
+  do not construct a Shiro Subject.
+- The production Shiro Filter and Realm implementations remain unchanged. Both
+  SSO and non-SSO filter-chain maps place `/agent/** -> anon` before `/** -> authc`,
+  delegating this exact namespace to the fail-closed Agent guard. Missing
+  `@AgentPermission`, invalid credentials, mixed authentication, unavailable
+  Control, or unavailable role-resource lookup all deny the request. `/api/**`
+  anonymity is not used for Agent traffic.
 - Conversation completion and cancellation validate user/conversation/run
   ownership.
 - Memory paths must begin with `<authenticated-user>/personal/`.
@@ -240,36 +257,37 @@ migrated or retained because the feature was not released.
 
 ## Scheduled-task configuration
 
-- `SCHEDULED_TASK_ENABLED` controls claiming and execution and defaults to
-  `false` until the existing production Realm accepts the restored scheduled
-  `ShiroUser`, the database migration and py scheduled adapter are deployed,
-  and cross-service security checks are complete.
+- `SCHEDULED_TASK_ENABLED` controls claiming and execution in `ark-control` and
+  remains disabled until the database schema, dedicated Agent
+  authorization endpoint, production role-resource adapter, and py scheduled
+  adapter are deployed and cross-service security checks are complete.
 - Worker tuning: `SCHEDULED_TASK_WORKER_THREADS` and
   `SCHEDULED_TASK_MAX_RUN_SECONDS`.
 
 The scanner runs every five seconds, claims at most 20 tasks per pass, queues
 at most 32 worker submissions, and rejects schedules more frequent than once
 per minute. These implementation limits are fixed in code. Configurable defaults
-are defined in `service/src/main/resources/application.yml`. Keep the
+are defined in `ark-control/src/main/resources/application.yml`. Keep the
 scheduler disabled while deploying or rolling back incompatible control and
 py-app versions.
 
-## Scheduled-task migration and rollback
+## Scheduled-task deployment and rollback
 
 Roll out in this order:
 
-1. Leave scheduling disabled and apply
-   `service/deploy/sql/20260813_add_scheduled_execution_identity.sql`. It drops
-   `agent_scheduled_task_run` first and `agent_scheduled_task` second, then
-   recreates both from the canonical schema. All pre-release task and run data
-   is intentionally discarded.
-2. Register the Control Scheduled Realm beside the existing production Realm,
-   verify the existing Realm authorizes its restored `ShiroUser`, and deploy the
-   py scheduled adapter while scheduling remains disabled.
+1. Leave scheduling disabled and have the DBA create the new tables from the
+   canonical `ark-control/src/main/resources/schema.sql`.
+2. Copy the three files from `ark-web/src/production-overlay/java/.../config`
+   over their matching production configurations. The two Shiro files differ
+   from the restored originals only by `/agent/** -> anon` before `/** -> authc`;
+   `InterceptorConfig` registers the Agent guard and excludes `/agent/**` from
+   the browser-only Referer, session-IP, and CSRF interceptors. Deploy the guard
+   using the existing `arkAuthService.queryResource` bean, then deploy the py
+   scheduled adapter while scheduling remains disabled.
 3. Deploy the web UI and verify draft, create, update, list, pause/start, and result
    APIs while no background run can be claimed.
 4. Enable scheduling on control only after the cross-service contract and
-   database migration are verified.
+   database schema are verified.
 
 Roll back in this order:
 
@@ -279,6 +297,17 @@ Roll back in this order:
    may remain in place.
 3. If the tables must be removed, drop `agent_scheduled_task_run` first and
    `agent_scheduled_task` second because of the foreign key.
+
+## Deployment boundary
+
+Publish `ark-control-facade` first. `ark-control` registers provider services in
+ZooKeeper, and `ark-web` consumes them. The SSE `chatMessage` path goes directly
+from `ark-web` to py-app and immediately writes and flushes each upstream byte
+chunk to the browser. Non-stream Agent operations remain synchronous Dubbo RPCs.
+
+HTTP and Dubbo filters must not log Agent arguments or stream data. They include
+the CAS cookie and model payload. During rollback, stop or
+roll back `ark-web` consumers before rolling back `ark-control` or its facade.
 
 ## Validation
 

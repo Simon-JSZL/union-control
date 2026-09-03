@@ -46,7 +46,7 @@ production file boundary.
   and the unchanged production annotation/constant/exception contracts copied into this mock
 - `application.properties`
 
-Those sources live under `service/src/local-mock/java` and are added only by the
+Those sources live under `ark-control/src/local-mock/java` and are added only by the
 `local-sensitive-compat` Maven profile. The local profile also owns the mock app's interceptor
 registration. Production keeps its existing interceptor registration and does not compile this
 source set.

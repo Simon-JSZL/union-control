@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xmlns:dubbo="http://code.alibabatech.com/schema/dubbo"
+       xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd
+                           http://code.alibabatech.com/schema/dubbo http://code.alibabatech.com/schema/dubbo/dubbo.xsd">
+    <dubbo:application name="${dubbo.application.name}"/>
+    <dubbo:registry address="${dubbo.registry.address}"/>
+    <dubbo:protocol name="dubbo" port="${dubbo.protocol.port}" transporter="netty4"/>
+    <dubbo:provider filter="providerAccessLog"/>
+
+    <dubbo:service interface="com.union.control.service.AgentExecutionService" ref="agentExecutionService"/>
+    <dubbo:service interface="com.union.control.service.AgentProxyService" ref="agentProxyService"/>
+    <dubbo:service interface="com.union.control.service.ConversationService" ref="conversationService"/>
+    <dubbo:service interface="com.union.control.service.MemoryStoreService" ref="memoryStoreService"/>
+    <dubbo:service interface="com.union.control.service.RunningAnalysisMockService" ref="runningAnalysisMockService"/>
+    <dubbo:service interface="com.union.control.service.ScheduledTaskService" ref="scheduledTaskService"/>
+    <dubbo:service interface="com.union.control.service.SensitiveDataDemoService" ref="sensitiveDataDemoService"/>
+    <dubbo:service interface="com.union.control.service.sensitive.SensitiveRevealService" ref="sensitiveRevealService"/>
+</beans>
