@@ -27,15 +27,7 @@ public final class ScheduledExecutionToken {
     }
 
     public String hash() {
-        try {
-            byte[] digest = MessageDigest.getInstance("SHA-256")
-                    .digest(value.getBytes(StandardCharsets.UTF_8));
-            StringBuilder result = new StringBuilder(64);
-            for (byte item : digest) result.append(String.format("%02x", item & 0xff));
-            return result.toString();
-        } catch (NoSuchAlgorithmException impossible) {
-            throw new IllegalStateException(impossible);
-        }
+        return hashSubmitted(value);
     }
 
     public static String hashSubmitted(String token) {

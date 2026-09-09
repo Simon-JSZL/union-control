@@ -30,8 +30,6 @@ public interface ConversationMapper {
                       @Param("role") String role,
                       @Param("sequence") long sequence,
                       @Param("payload") String payload);
-    Map<String, Object> findMessage(@Param("conversationId") String conversationId,
-                                    @Param("messageId") String messageId);
     int touchConversation(@Param("conversationId") String conversationId,
                           @Param("userId") String userId);
     List<Map<String, Object>> findRootMessages(@Param("userId") String userId,

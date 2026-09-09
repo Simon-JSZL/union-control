@@ -64,6 +64,42 @@ public class AgentProxyServiceTest {
         server.verify();
     }
 
+    @Test(timeout = 5000)
+    public void allProxyModesStopWaitingForASilentUpstream() throws Exception {
+        com.sun.net.httpserver.HttpServer server = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", exchange -> {
+            try { Thread.sleep(150); }
+            catch (InterruptedException error) { Thread.currentThread().interrupt(); }
+            finally { exchange.close(); }
+        });
+        server.start();
+        try {
+            AgentProxyServiceImpl service = new AgentProxyServiceImpl(
+                    "http://127.0.0.1:" + server.getAddress().getPort(), new ObjectMapper(), 0.05);
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.sync("session", "{}"))
+                    .isInstanceOf(org.springframework.web.client.ResourceAccessException.class)
+                    .hasCauseInstanceOf(java.net.SocketTimeoutException.class);
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.scheduled("Scheduled token"))
+                    .isInstanceOf(org.springframework.web.client.ResourceAccessException.class)
+                    .hasCauseInstanceOf(java.net.SocketTimeoutException.class);
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.cancel("session", "thread", "run"))
+                    .isInstanceOf(org.springframework.web.client.ResourceAccessException.class)
+                    .hasCauseInstanceOf(java.net.SocketTimeoutException.class);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    public void rejectsUnboundedOrOverflowingTimeouts() {
+        for (double seconds : new double[]{0, -1, Double.NaN, Double.POSITIVE_INFINITY, Integer.MAX_VALUE}) {
+            org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                    new AgentProxyServiceImpl("http://py-app", new ObjectMapper(), seconds))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+    }
+
     private static ListAppender<ILoggingEvent> logs() {
         ch.qos.logback.classic.Logger logger =
                 (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(AgentProxyServiceImpl.class);

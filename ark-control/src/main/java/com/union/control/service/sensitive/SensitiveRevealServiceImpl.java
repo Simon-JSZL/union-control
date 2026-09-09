@@ -3,7 +3,7 @@ package com.union.control.service.sensitive;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nucc.channel.ark.common.exception.CheckException;
 import com.union.control.utils.security.SymmetricalSecurityUtils;
-import com.union.control.utils.ServiceSupport;
+import com.union.control.utils.AgentSupport;
 import com.union.control.service.sensitive.SensitiveRevealService.ExpiredTokenException;
 import com.union.control.service.sensitive.SensitiveRevealService.InvalidTokenException;
 import com.union.control.service.sensitive.SensitiveRevealService.RevealDecryptionException;
@@ -31,7 +31,7 @@ public final class SensitiveRevealServiceImpl implements SensitiveRevealService 
     }
 
     public String reveal(String input) {
-        Map<String, Object> request = ServiceSupport.request(json, input);
+        Map<String, Object> request = AgentSupport.request(json, input);
         Object rawToken = request.get("token");
         String token = rawToken instanceof String ? (String) rawToken : null;
         if (token == null || !TOKEN.matcher(token).matches()) throw new InvalidTokenException();

@@ -16,7 +16,7 @@ import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.UUID;
 
-import static com.union.control.utils.ServiceSupport.*;
+import static com.union.control.utils.AgentSupport.*;
 
 @Service("conversationService")
 public class ConversationServiceImpl implements ConversationService {
@@ -58,8 +58,9 @@ public class ConversationServiceImpl implements ConversationService {
         String conversationId = text(request, "conversationId", 64, true);
         requireId(conversationId);
         Map<String, Object> result = loadConversation(userId, conversationId);
-        result.put("messages", loadBrowserMessages(userId, conversationId));
-        result.put("executions", loadExecutions(userId, conversationId));
+        List<Map<String, Object>> executions = executionMapper.findExecutions(userId, conversationId);
+        result.put("messages", loadBrowserMessages(userId, conversationId, executions));
+        result.put("executions", publicExecutions(executions));
         return ok(result);
     }
 
@@ -145,8 +146,8 @@ public class ConversationServiceImpl implements ConversationService {
         return messages;
     }
 
-    private List<Object> loadBrowserMessages(String userId, String conversationId) {
-        List<Map<String, Object>> executions = loadExecutionRows(userId, conversationId);
+    private List<Object> loadBrowserMessages(
+            String userId, String conversationId, List<Map<String, Object>> executions) {
         Map<String, Map<String, Object>> byRun = new LinkedHashMap<>();
         for (Map<String, Object> execution : executions)
             byRun.put(String.valueOf(execution.get("runId")), execution);
@@ -222,14 +223,9 @@ public class ConversationServiceImpl implements ConversationService {
         return conversation;
     }
 
-    private List<Map<String, Object>> loadExecutionRows(String userId, String conversationId) {
-        return executionMapper.findExecutions(userId, conversationId);
-    }
-
-    private List<Map<String, Object>> loadExecutions(String userId, String conversationId) {
+    private static List<Map<String, Object>> publicExecutions(List<Map<String, Object>> rows) {
         List<Map<String, Object>> result = new ArrayList<>();
-        for (Map<String, Object> row : loadExecutionRows(userId, conversationId))
-            result.add(publicExecution(row));
+        for (Map<String, Object> row : rows) result.add(publicExecution(row));
         return result;
     }
 

@@ -1,7 +1,7 @@
 package com.union.control.service.impl;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.union.control.utils.ServiceSupport;
+import com.union.control.utils.AgentSupport;
 import com.union.control.service.RunningAnalysisMockService;
 
 import java.time.LocalDate;
@@ -256,8 +256,8 @@ public class RunningAnalysisMockServiceImpl implements RunningAnalysisMockServic
     }
 
     private Map<String, Object> request(String input) {
-        Map<String, Object> payload = ServiceSupport.request(json, input);
-        ServiceSupport.userId(payload);
+        Map<String, Object> payload = AgentSupport.request(json, input);
+        AgentSupport.userId(payload);
         return payload;
     }
 

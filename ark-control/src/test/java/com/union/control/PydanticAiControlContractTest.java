@@ -27,8 +27,8 @@ public class PydanticAiControlContractTest {
     public void sharedRequestUtilitiesStayOutsideTheServicePackage() {
         Path root = Paths.get("src/main/java/com/union/control");
 
-        assertThat(root.resolve("utils/ServiceSupport.java")).exists();
-        assertThat(root.resolve("service/ServiceSupport.java")).doesNotExist();
+        assertThat(root.resolve("utils/AgentSupport.java")).exists();
+        assertThat(root.resolve("service/AgentSupport.java")).doesNotExist();
         assertThat(root.resolve("service/ServiceExceptions.java")).doesNotExist();
     }
 

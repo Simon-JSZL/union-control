@@ -14,6 +14,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.ClientHttpResponse;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.client.ResponseErrorHandler;
 import org.springframework.web.client.RestTemplate;
@@ -50,8 +51,16 @@ public class LlmController {
             AgentExecutionService executions,
             AgentProxyService gateway,
             AuthenticatedRequest request,
-            @Value("${agent.py-app-base-url}") String pyAppBaseUrl) {
+            @Value("${agent.py-app-base-url}") String pyAppBaseUrl,
+            @Value("${AGENT_MAX_RUN_SECONDS:900}") double maxRunSeconds) {
         this(conversations, executions, gateway, request, pyAppBaseUrl, new RestTemplate());
+        double millis = Math.ceil(maxRunSeconds * 1000);
+        if (!Double.isFinite(millis) || millis < 1 || millis > Integer.MAX_VALUE)
+            throw new IllegalArgumentException("AGENT_MAX_RUN_SECONDS is out of range");
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout((int) millis);
+        factory.setReadTimeout((int) millis);
+        http.setRequestFactory(factory);
     }
 
     LlmController(

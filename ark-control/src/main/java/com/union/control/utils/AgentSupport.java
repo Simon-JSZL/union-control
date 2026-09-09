@@ -7,10 +7,10 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.regex.Pattern;
 
-public final class ServiceSupport {
+public final class AgentSupport {
     private static final Pattern ID = Pattern.compile("[A-Za-z0-9._:@-]{1,64}");
 
-    private ServiceSupport() {}
+    private AgentSupport() {}
 
     public static Map<String, Object> request(ObjectMapper json, String input) {
         if (input == null) throw new IllegalArgumentException("请求参数非法");

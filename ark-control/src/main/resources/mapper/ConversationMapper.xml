@@ -68,12 +68,6 @@
         VALUES (#{conversationId},#{userId},#{messageId},#{executionId},#{role},#{sequence},#{payload},1)
     </insert>
 
-    <select id="findMessage" resultType="map">
-        SELECT agent_execution_id AS executionId,role,payload
-        FROM ai_conversation_message
-        WHERE conversation_id=#{conversationId} AND message_id=#{messageId}
-    </select>
-
     <update id="touchConversation">
         UPDATE ai_conversation
         SET updated_at=CURRENT_TIMESTAMP

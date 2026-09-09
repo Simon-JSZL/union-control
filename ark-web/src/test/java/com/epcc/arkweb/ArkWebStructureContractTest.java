@@ -31,6 +31,36 @@ public class ArkWebStructureContractTest {
     private static final Path WORKSPACE = Paths.get("..");
 
     @Test
+    public void dubboTimeoutBindsTheSharedPyDeadline() {
+        for (String seconds : new String[]{null, "2.5"}) {
+            org.springframework.beans.factory.support.DefaultListableBeanFactory beans =
+                    new org.springframework.beans.factory.support.DefaultListableBeanFactory();
+            beans.setBeanExpressionResolver(new org.springframework.context.expression.StandardBeanExpressionResolver());
+            new org.springframework.beans.factory.xml.XmlBeanDefinitionReader(beans)
+                    .loadBeanDefinitions("classpath:dubbo-consumer.xml");
+            java.util.Properties values = new java.util.Properties();
+            values.setProperty("dubbo.application.name", "timeout-test");
+            values.setProperty("dubbo.registry.address", "N/A");
+            values.setProperty("dubbo.consumer.timeout-ms", "10000");
+            values.setProperty("dubbo.consumer.check", "false");
+            values.setProperty("dubbo.consumer.direct-url", "");
+            if (seconds != null) values.setProperty("AGENT_MAX_RUN_SECONDS", seconds);
+            org.springframework.context.support.PropertySourcesPlaceholderConfigurer placeholders =
+                    new org.springframework.context.support.PropertySourcesPlaceholderConfigurer();
+            placeholders.setEnvironment(new org.springframework.mock.env.MockEnvironment());
+            placeholders.setProperties(values);
+            placeholders.postProcessBeanFactory(beans);
+            try {
+                com.alibaba.dubbo.config.spring.ReferenceBean<?> reference =
+                        (com.alibaba.dubbo.config.spring.ReferenceBean<?>) beans.getBean("&agentProxyService");
+                assertThat(reference.getTimeout()).isEqualTo(seconds == null ? 900000 : 2500);
+            } finally {
+                beans.destroySingletons();
+            }
+        }
+    }
+
+    @Test
     public void localApplicationUsesTheProductionRootPackage() throws Exception {
         String source = source("com/epcc/arkweb/Application.java");
         assertThat(source)
@@ -215,7 +245,7 @@ public class ArkWebStructureContractTest {
         assertThat(pom).contains("<artifactId>ark-control-facade</artifactId>")
                 .doesNotContain("<artifactId>ark-control</artifactId>");
         assertThat(dubbo)
-                .contains("id=\"agentProxyService\" interface=\"com.union.control.service.AgentProxyService\" check=\"${dubbo.consumer.check}\" url=\"${dubbo.consumer.direct-url}\" timeout=\"120000\"")
+                .contains("id=\"agentProxyService\" interface=\"com.union.control.service.AgentProxyService\" check=\"${dubbo.consumer.check}\" url=\"${dubbo.consumer.direct-url}\" timeout=\"#{T(java.lang.Math).ceil(${AGENT_MAX_RUN_SECONDS:900} * 1000)}\"")
                 .contains("url=\"${dubbo.consumer.direct-url}\"")
                 .contains("timeout=\"${dubbo.consumer.timeout-ms}\"")
                 .contains("retries=\"0\"")

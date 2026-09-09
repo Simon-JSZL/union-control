@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.union.control.mapper.SensitiveAddressBookDemo;
 import com.union.control.mapper.SensitiveDataDemoMapper;
 import com.union.control.service.SensitiveDataDemoService;
-import com.union.control.utils.ServiceSupport;
+import com.union.control.utils.AgentSupport;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -23,28 +23,28 @@ public class SensitiveDataDemoServiceImpl implements SensitiveDataDemoService {
     }
 
     public int insert(String input) {
-        Map<String, Object> payload = ServiceSupport.request(json, input);
-        return mapper.insert(ServiceSupport.text(payload, "phoneNumber", 64, true));
+        Map<String, Object> payload = AgentSupport.request(json, input);
+        return mapper.insert(AgentSupport.text(payload, "phoneNumber", 64, true));
     }
 
     public List<Map<String, Object>> query(String input) {
-        ServiceSupport.request(json, input);
+        AgentSupport.request(json, input);
         return mapper.query();
     }
 
     public int insertAddressBook(String input) {
-        Map<String, Object> payload = ServiceSupport.request(json, input);
+        Map<String, Object> payload = AgentSupport.request(json, input);
         SensitiveAddressBookDemo row = new SensitiveAddressBookDemo();
-        row.setName(ServiceSupport.text(payload, "name", 64, true));
-        row.setRole(ServiceSupport.text(payload, "role", 32, true));
-        row.setEmail(ServiceSupport.text(payload, "email", 255, true));
-        row.setTelephone(ServiceSupport.text(payload, "telephone", 32, true));
-        row.setMobileNumber(ServiceSupport.text(payload, "mobileNumber", 32, true));
+        row.setName(AgentSupport.text(payload, "name", 64, true));
+        row.setRole(AgentSupport.text(payload, "role", 32, true));
+        row.setEmail(AgentSupport.text(payload, "email", 255, true));
+        row.setTelephone(AgentSupport.text(payload, "telephone", 32, true));
+        row.setMobileNumber(AgentSupport.text(payload, "mobileNumber", 32, true));
         return mapper.insertAddressBook(row);
     }
 
     public List<Map<String, Object>> queryAddressBook(String input) {
-        ServiceSupport.request(json, input);
+        AgentSupport.request(json, input);
         List<Map<String, Object>> result = new ArrayList<>();
         for (SensitiveAddressBookDemo row : mapper.queryAddressBook()) {
             Map<String, Object> value = new LinkedHashMap<>();

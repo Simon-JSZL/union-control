@@ -12,6 +12,7 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.client.ClientHttpResponse;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.ResponseErrorHandler;
 import org.springframework.web.client.RestTemplate;
@@ -32,8 +33,16 @@ public class AgentProxyServiceImpl implements AgentProxyService {
     @Autowired
     public AgentProxyServiceImpl(
             @Value("${agent.py-app-base-url}") String pyAppBaseUrl,
-            ObjectMapper json) {
+            ObjectMapper json,
+            @Value("${AGENT_MAX_RUN_SECONDS:900}") double maxRunSeconds) {
         this(pyAppBaseUrl, new RestTemplate(), json);
+        double millis = Math.ceil(maxRunSeconds * 1000);
+        if (!Double.isFinite(millis) || millis < 1 || millis > Integer.MAX_VALUE)
+            throw new IllegalArgumentException("AGENT_MAX_RUN_SECONDS is out of range");
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout((int) millis);
+        factory.setReadTimeout((int) millis);
+        http.setRequestFactory(factory);
     }
 
     public AgentProxyServiceImpl(String pyAppBaseUrl, RestTemplate http, ObjectMapper json) {

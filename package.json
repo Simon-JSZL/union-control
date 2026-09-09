@@ -1,6 +1,6 @@
 {
   "name": "union-agent-apps",
-  "version": "1.1.6",
+  "version": "1.1.7",
   "description": "Ark Web and Ark Control Dubbo applications for Union Agent",
   "files": [
     "ark-control-facade",
@@ -9,7 +9,8 @@
     "!ark-control-facade/target",
     "!ark-control/target",
     "!ark-web/target",
-    "PROJECT_OVERVIEW.md"
+    "PROJECT_OVERVIEW.md",
+    "pom.xml"
   ],
   "scripts": {
     "test": "mvn test"

@@ -99,6 +99,74 @@ Shiro configuration, filters, Realm, and identity model are reused as-is.
 Scheduled-task code must not introduce a parallel domain package containing its
 own mapper, service, Web facade, production-authentication wrapper, or local mock.
 
+### Production integration boundary and review baseline
+
+Confirmed by the project owner on 2026-09-08: this repository is a local
+simulation and a source integration workspace. Its standalone JARs, POMs,
+configuration files, and Dubbo XML are not deployed wholesale to production.
+Selected business changes are integrated into the existing production projects.
+
+- Production already has the correct, independently maintained database schema
+  and configuration. Local ignored `schema.sql` and `application.yml` files,
+  local schema initialization, and local scheduler defaults are not production
+  deployment inputs. Missing local files may affect clean-checkout testing,
+  but must not be reported as missing production schema/configuration or as
+  production scheduling being enabled without evidence from the integration.
+- Production excludes all demo/mock implementations and their wiring. This
+  includes local sensitive crypto/auth substitutes, compatibility copies,
+  `SensitiveDataDemo*`, and `RunningAnalysisMockService*`. Production retains
+  its real crypto, authentication, and business services. Exclusion also covers
+  demo controller methods, constructor dependencies, mapper registrations, and
+  Dubbo references/exports; removing only the implementation files is insufficient.
+- Production already has its own complete Dubbo logging. It does not import
+  `ProviderAccessLogFilter`, its SPI registration, or the local XML filter
+  setting. Findings in this local logger do not establish a production log leak.
+  Preserve the existing production logging implementation.
+- Under this confirmed integration boundary, review findings F01, F03, F04,
+  F06, and F07 from the 2026-09-08 audit are not production release blockers.
+  Reopen them only if the actual integration starts importing the excluded
+  sources/configuration or contradicts these assumptions. Review the selected
+  production changeset, not a hypothetical deployment of this mock application.
+- Implement new functionality against the production dependency versions;
+  do not downgrade the host to match the local build or upgrade the host just
+  to accommodate new code. Production reference sources are
+  `/Users/simon/code/restored/ark-web` and
+  `/Users/simon/code/restored/ark-control`; these are read-only reference inputs.
+  The Web parent POM specifies Boot 2.1.18.RELEASE, whose BOM manages Spring
+  5.1.19.RELEASE. Its Jackson BOM override is 2.17.2; Shiro is 1.12.0 and Dubbo
+  is 2.6.9. The production `InterceptorConfig` already implements
+  `WebMvcConfigurer`; the overlay compiles against Spring 5.1.19. F02's
+  Spring-4-only compilation failure is not a production incompatibility.
+- The restored Control snapshot currently contains only dao/common child
+  POMs, with versions inherited from an absent root `ark-control/pom.xml`.
+  Do not infer Control's Spring/MyBatis versions from the local simulation or
+  the Web parent. Obtain its root/effective POM before claiming full production
+  dependency compatibility. Host-specific dependency overrides take precedence
+  over a Boot version alone.
+
+### Cross-service timeout review
+
+Inspect `/Users/simon/code/union-py-app` before assessing Agent timeout coverage.
+Py owns Agent execution deadlines; Java transport timeouts are a separate
+connection/resource safeguard, not another Agent lifecycle implementation.
+
+`AGENT_MAX_RUN_SECONDS` is the shared execution duration, defaulting to 900
+seconds. Set the same value in web, control, and py-app. Py's
+`ExecutionCoordinator` applies it across streaming preparation and execution;
+`sync_runs._sync_response` applies one `anyio.fail_after` scope across the shared
+router and root Agent for both `/sync` and `/scheduled`, returning HTTP 504 with
+`execution_timeout` on expiry. SSE comment keepalives remain every 15 seconds;
+existing authentication, state, and tool HTTP timeouts remain unchanged.
+
+Java Agent HTTP connect/read timeouts and the Agent proxy Dubbo reference use
+this same duration (converted to milliseconds), instead of unbounded socket
+waits or the historical 120-second RPC timeout. HTTP timeouts bound individual
+socket waits; py remains responsible for the total execution deadline. No
+second execution lifecycle is introduced. Preserve the scheduled stale-run
+and token-expiry margins above that duration (defaults 930 and 960 seconds).
+The F05 deadline gap is covered by sync/scheduled router, root, and combined
+budget cancellation tests and Java silent-upstream tests.
+
 ## Purpose
 
 `ark-web` is the browser-facing control plane for the PydanticAI service;
@@ -111,7 +179,10 @@ SSE proxying.
 ## Runtime
 
 - Java 8
-- Spring Boot 1.5
+- Standalone simulation: Spring Boot 1.5.22.RELEASE / Spring 4.3.25.RELEASE
+- Production Web: Spring Boot 2.1.18.RELEASE / Spring 5.1.19.RELEASE; use the
+  production POM overrides described above. Production Control version is
+  pending verification of its missing parent POM.
 - MySQL 8
 - Browser APIs remain under `/llm/**`
 - Internal py-app APIs remain under `/agent/**`; they must not move under the
@@ -174,8 +245,9 @@ migration branch. The global reveal mode replaces sensitive plaintext fragments
 with masks and short-lived Redis tokens. AddressBook result rows whose returned
 `role` value is explicitly configured may remain plaintext; missing, unknown, or
 invalid roles stay masked. The authenticated reveal API decrypts only the token's
-fragment. The unavailable production `sensitiveProxy` is replaced locally only
-when the `local-sensitive-mock` profile is explicitly active.
+fragment. The local simulation supplies a non-cryptographic `sensitiveProxy`
+under the default or explicit `local-sensitive-mock` profile. This substitute
+is excluded from production, which retains its existing real proxy.
 
 `agent_scheduled_task` and `agent_scheduled_task_run` persist task definitions
 and individual outcomes. The task table owns the natural-language prompt,
@@ -267,7 +339,8 @@ migrated or retained because the feature was not released.
 The scanner runs every five seconds, claims at most 20 tasks per pass, queues
 at most 32 worker submissions, and rejects schedules more frequent than once
 per minute. These implementation limits are fixed in code. Configurable defaults
-are defined in `ark-control/src/main/resources/application.yml`. Keep the
+are defined locally in `ark-control/src/main/resources/application.yml`;
+production uses its separately maintained configuration. Keep the
 scheduler disabled while deploying or rolling back incompatible control and
 py-app versions.
 
@@ -275,8 +348,10 @@ py-app versions.
 
 Roll out in this order:
 
-1. Leave scheduling disabled and have the DBA create the new tables from the
-   canonical `ark-control/src/main/resources/schema.sql`.
+1. Leave scheduling disabled and verify the existing production schema with
+   the DBA. Production already maintains the correct schema separately; the
+   local `ark-control/src/main/resources/schema.sql` is a simulation reference,
+   not a required production deployment input.
 2. Copy the three files from `ark-web/src/production-overlay/java/.../config`
    over their matching production configurations. The two Shiro files differ
    from the restored originals only by `/agent/** -> anon` before `/** -> authc`;

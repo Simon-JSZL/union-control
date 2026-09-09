@@ -9,7 +9,7 @@
     <dubbo:consumer timeout="${dubbo.consumer.timeout-ms}" retries="0"/>
 
     <dubbo:reference id="agentExecutionService" interface="com.union.control.service.AgentExecutionService" check="${dubbo.consumer.check}" url="${dubbo.consumer.direct-url}"/>
-    <dubbo:reference id="agentProxyService" interface="com.union.control.service.AgentProxyService" check="${dubbo.consumer.check}" url="${dubbo.consumer.direct-url}" timeout="120000"/>
+    <dubbo:reference id="agentProxyService" interface="com.union.control.service.AgentProxyService" check="${dubbo.consumer.check}" url="${dubbo.consumer.direct-url}" timeout="#{T(java.lang.Math).ceil(${AGENT_MAX_RUN_SECONDS:900} * 1000)}"/>
     <dubbo:reference id="conversationService" interface="com.union.control.service.ConversationService" check="${dubbo.consumer.check}" url="${dubbo.consumer.direct-url}"/>
     <dubbo:reference id="memoryStoreService" interface="com.union.control.service.MemoryStoreService" check="${dubbo.consumer.check}" url="${dubbo.consumer.direct-url}"/>
     <dubbo:reference id="runningAnalysisMockService" interface="com.union.control.service.RunningAnalysisMockService" check="${dubbo.consumer.check}" url="${dubbo.consumer.direct-url}"/>

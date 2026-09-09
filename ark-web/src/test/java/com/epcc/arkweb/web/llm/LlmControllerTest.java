@@ -77,4 +77,37 @@ public class LlmControllerTest {
         assertThat(response.getHeader("X-Accel-Buffering")).isEqualTo("no");
         server.verify();
     }
+    @Test(timeout = 5000)
+    public void streamingStopsWaitingForASilentUpstream() throws Exception {
+        com.sun.net.httpserver.HttpServer server = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", exchange -> {
+            try { Thread.sleep(150); }
+            catch (InterruptedException error) { Thread.currentThread().interrupt(); }
+            finally { exchange.close(); }
+        });
+        server.start();
+        try {
+            AuthenticatedRequest request = mock(AuthenticatedRequest.class);
+            AgentExecutionService executions = mock(AgentExecutionService.class);
+            byte[] payload = "{}".getBytes(StandardCharsets.UTF_8);
+            when(request.clientPayload(payload)).thenReturn(payload);
+            when(request.json(payload)).thenReturn("claim");
+            Map<String, Object> execution = new LinkedHashMap<>();
+            execution.put("conversationId", "thread-1");
+            execution.put("runId", "run-1");
+            when(executions.claimAguiRun("claim"))
+                    .thenReturn(java.util.Collections.singletonMap("data", execution));
+            LlmController controller = new LlmController(mock(ConversationService.class), executions,
+                    mock(AgentProxyService.class), request,
+                    "http://127.0.0.1:" + server.getAddress().getPort(), 0.05);
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> controller.chatMessage(
+                    "session", payload, new MockHttpServletResponse()))
+                    .isInstanceOf(org.springframework.web.client.ResourceAccessException.class)
+                    .hasCauseInstanceOf(java.net.SocketTimeoutException.class);
+        } finally {
+            server.stop(0);
+        }
+    }
+
 }

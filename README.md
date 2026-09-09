@@ -64,16 +64,19 @@ Configuration:
 - `DUBBO_CONSUMER_CHECK` (consumer, default `false`)
 - `DUBBO_DIRECT_URL` (consumer, optional; local direct-connect example:
   `dubbo://ark-control.localhost:20880`)
-- `DUBBO_CONSUMER_TIMEOUT_MS` (consumer, default `10000`)
+- `DUBBO_CONSUMER_TIMEOUT_MS` (ordinary RPCs, default `10000`)
+- `AGENT_MAX_RUN_SECONDS` (default `900`; set the same value on web, control,
+  and py-app; Agent HTTP connect/read and proxy RPC timeouts use this duration)
 - `LOCAL_AUTHORIZED_ROLE_ID` (local `arkAuthService` mock only, default `role-1`)
-- `SCHEDULED_TASK_ENABLED` (default `false`)
+- `SCHEDULED_TASK_ENABLED` (production keeps scheduling disabled until rollout
+  checks pass; the independently maintained local YAML may enable it)
 - `SCHEDULED_TASK_WORKER_THREADS` (default `2`)
 - `SCHEDULED_TASK_MAX_RUN_SECONDS` (default `930`)
 - `SCHEDULED_TASK_TOKEN_TTL_SECONDS` (default `960`; must exceed the max run time)
 - `MYSQL_URL`, `MYSQL_USER`, `MYSQL_PASSWORD` (`MYSQL_URL` must use a UTC connection timezone)
 - `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, `REDIS_TIMEOUT_MS`
-- `SENSITIVE_REVEAL_ENABLED` (default `false`)
-- `SENSITIVE_REVEAL_STATEMENTS` (default empty; comma-separated exact mapper statement IDs)
+- `SENSITIVE_REVEAL_ENABLED` (local application.properties defaults to `true`;
+  production supplies its own setting)
 - `SENSITIVE_REVEAL_TTL_SECONDS` (default `300`)
 
 For local Dubbo without ZooKeeper, set `DUBBO_REGISTRY_ADDRESS=N/A` on both
@@ -106,10 +109,10 @@ control-to-py calls forward only the authenticated CAS session. If
 `PY_APP_BASE_URL` is not loopback, use HTTPS with mTLS or an equivalent
 authenticated service mesh.
 
-New local and production tables are created from
-`ark-control/src/main/resources/schema.sql`. It is the canonical schema for the
-AG-UI, Memory, and scheduled-task tables; there is no legacy compatibility or
-incremental migration layer.
+Production already maintains its own correct schema and configuration.
+`ark-control/src/main/resources/schema.sql` is the local AG-UI, Memory, and
+scheduled-task simulation reference. These local files and standalone JARs are
+not production deployment inputs; see PROJECT_OVERVIEW.md for the integration boundary.
 
 Natural-language scheduled tasks use the two `agent_scheduled_task*` tables and
 snapshot the authenticated CAS principal's `userId`, `orgCode`, and selected
@@ -117,8 +120,7 @@ Ark `roleId` on create and update.
 The scheduler stores only the successful py-app result's `content` and
 `agentName` on the run; opening an unread run atomically creates the normal
 AG-UI conversation and messages.
-Production deploys the new tables from the canonical `schema.sql` after DBA
-review. The application-specific production configuration is managed separately.
+Production uses its DBA-maintained schema and separately managed configuration.
 Each occurrence receives a 256-bit, short-lived token while the database stores
 only its SHA-256 hash. Control calls py `/agent/v1/runs/scheduled` with only that
 token and `{}`; py calls `/agent/scheduledTaskAuthorize`, which resolves the
@@ -131,14 +133,25 @@ Subject, or tool endpoint copy is introduced.
 Each user may keep at most 100 `ACTIVE` or `PAUSED` tasks.
 
 The isolated sensitive-data demo mirrors the production database boundary.
-`POST /api/sensitive/demo` and `GET /api/sensitive/demo` use a MyBatis field
-interceptor that encrypts before a database write and decrypts after a read.
-The existing decrypt path exposes one hook; its reveal implementation replaces
-the plaintext with a masked value plus a short-lived, owner-bound token. The
-independent `POST /api/sensitive/reveal` API resolves that token and decrypts
-the ciphertext without re-entering the masking hook. Send the local mock cookie
-`CASSESSIONID=session-1`. The local crypto dependency remains Base64URL-only;
-production supplies its existing AES implementation at the same boundary.
+`POST /api/sensitive/reveal/demo/insert` and
+`GET /api/sensitive/reveal/demo/query` exercise field encryption on write and
+masking on read. AddressBook demos use the `/demo/address-book/insert` and
+`/demo/address-book/query` suffixes under `/api/sensitive/reveal`.
+The reveal hook replaces plaintext fragments with masks and short-lived bearer
+tokens. `POST /api/sensitive/reveal` requires the existing authenticated
+permission and resolves the fragment token; this version does not bind tokens
+to their owner's identity. Local authentication uses `local-auth-mock` and its
+normal Shiro session, not a hard-coded CAS cookie. The crypto mock prefixes and
+Base64-encodes data; it is not encryption. Production excludes the demo and mock
+code and retains its own authentication, crypto, configuration, and Dubbo logs.
+
+Streaming, sync, and scheduled py execution use `AGENT_MAX_RUN_SECONDS` (900
+seconds by default). Sync and scheduled return HTTP 504 with `execution_timeout`
+when the shared router-plus-Agent budget expires. Java uses the same setting
+for finite HTTP connect/read waits and the Agent proxy Dubbo reference, replacing
+the old fixed 120-second RPC wait. These are socket wait limits, not another
+Agent lifecycle. Deploy the same value to all three processes; retain a larger
+scheduled stale-run threshold and an even larger token TTL (defaults 930/960).
 
 Run the Java 8 test suite with:
 

@@ -51,6 +51,9 @@ Those sources live under `ark-control/src/local-mock/java` and are added only by
 registration. Production keeps its existing interceptor registration and does not compile this
 source set.
 
-The mock proxy is intentionally non-cryptographic and exists only behind the explicitly activated
-`local-sensitive-mock` Spring profile. Production continues to supply its existing
-`sensitiveProxy` bean.
+The mock proxy is intentionally non-cryptographic and is enabled by the local
+`default` or explicit `local-sensitive-mock` Spring profile. It is excluded from
+production, which continues to supply its existing `sensitiveProxy` bean.
+The production reveal controller integration excludes demo methods and their
+constructor/service dependencies; the combined local demo controller is not
+copied wholesale.

@@ -36,6 +36,20 @@ public class ConversationServiceTest {
     }
 
     @Test
+    public void conversationDetailsLoadsExecutionsOnce() {
+        ConversationMapper conversations = mock(ConversationMapper.class);
+        AgentExecutionMapper executions = mock(AgentExecutionMapper.class);
+        when(conversations.findConversation(TestJson.USER_ID, "thread-1"))
+                .thenReturn(new java.util.LinkedHashMap<>());
+        when(executions.findExecutions(TestJson.USER_ID, "thread-1"))
+                .thenReturn(Collections.emptyList());
+        new ConversationServiceImpl(conversations, executions,
+                mock(ScheduledTaskMapper.class), new ObjectMapper())
+                .conversation(TestJson.request("conversationId", "thread-1"));
+        verify(executions).findExecutions(TestJson.USER_ID, "thread-1");
+    }
+
+    @Test
     public void deletingConversationAlsoDeletesItsClaimedScheduledRun() {
         ConversationMapper conversations = mock(ConversationMapper.class);
         AgentExecutionMapper executions = mock(AgentExecutionMapper.class);
