@@ -176,6 +176,49 @@ public class AESInterceptorCompatibilityTest {
     }
 
     @Test
+    public void demoSaveStatementsKeepEncryptionAndAddressBookBypass() throws Throwable {
+        for (String method : new String[]{"insertSaved", "update", "updateAddressBook"}) {
+            Executor executor = mock(Executor.class);
+            Contact parameter = new Contact("13800138000");
+            MappedStatement write = statement("com.union.control.mapper.SensitiveDataDemoMapper." + method,
+                    SqlCommandType.UPDATE, "update t_m_announce_address_book set mobile_number = ?");
+            when(executor.update(any(MappedStatement.class), any())).thenReturn(1);
+            interceptor().intercept(updateInvocation(executor, write, parameter));
+            assertEquals(Base64.getEncoder().encodeToString(
+                    "enc:13800138000".getBytes(StandardCharsets.UTF_8)), parameter.mobile);
+            org.mockito.ArgumentCaptor<MappedStatement> captured =
+                    org.mockito.ArgumentCaptor.forClass(MappedStatement.class);
+            verify(executor).update(captured.capture(), any());
+            assertEquals(method.equals("updateAddressBook"),
+                    captured.getValue().getBoundSql(parameter).getSql().contains("address_book_new"));
+        }
+    }
+
+    @Test
+    public void exactSavedRowQueriesStayMaskedInStrictModeIncludingWhitelistedRoles() throws Throwable {
+        SymmetricalSecurityUtils crypto = new SymmetricalSecurityUtils(new PrefixGateway());
+        SensitiveRevealProcessor processor = new SensitiveRevealProcessor(crypto,
+                new RedisRevealTokenStore(new RecordingStore(), 300));
+        AESInterceptor interceptor = interceptor(processor, false, "001");
+        org.springframework.test.util.ReflectionTestUtils.setField(interceptor, "strictMode", true);
+        for (String method : new String[]{"queryById", "queryAddressBookById"}) {
+            Executor executor = mock(Executor.class);
+            AddressBookContact row = new AddressBookContact("001", crypto.encryptWithCheck("13800138000"));
+            when(executor.query(any(MappedStatement.class), any(), any(RowBounds.class), any(ResultHandler.class)))
+                    .thenReturn((List) Collections.singletonList(row));
+            interceptor.intercept(queryInvocation(executor,
+                    statement("com.union.control.mapper.SensitiveDataDemoMapper." + method,
+                            SqlCommandType.SELECT, "select * from t_m_announce_address_book where id = ?"), null));
+            assertTrue(row.mobile.startsWith("[#138****8000#VIEW:rt_"));
+            org.mockito.ArgumentCaptor<MappedStatement> captured =
+                    org.mockito.ArgumentCaptor.forClass(MappedStatement.class);
+            verify(executor).query(captured.capture(), any(), any(RowBounds.class), any(ResultHandler.class));
+            assertEquals(method.equals("queryAddressBookById"),
+                    captured.getValue().getBoundSql(null).getSql().contains("address_book_new"));
+        }
+    }
+
+    @Test
     public void pluginOnlyWrapsExecutors() {
         AESInterceptor interceptor = interceptor();
         Object other = new Object();
@@ -280,6 +323,50 @@ public class AESInterceptorCompatibilityTest {
         assertEquals("13800138000", plaintext.mobile);
         assertTrue(masked.mobile.matches("\\[#139\\*{4}9000#VIEW:rt_[A-Za-z0-9_-]{43}\\]"));
         assertEquals(1, store.values.size());
+    }
+
+    @Test
+    public void strictModeMasksEveryAddressBookRoleEvenWhenRevealIsDisabled() throws Throwable {
+        SymmetricalSecurityUtils crypto = new SymmetricalSecurityUtils(new PrefixGateway());
+        RecordingStore store = new RecordingStore();
+        SensitiveRevealProcessor processor =
+                new SensitiveRevealProcessor(crypto, new RedisRevealTokenStore(store, 300));
+        AESInterceptor interceptor = interceptor(processor, false, "001,002,003");
+        org.springframework.test.util.ReflectionTestUtils.setField(interceptor, "strictMode", true);
+        List<AddressBookContact> rows = new ArrayList<>();
+        for (String role : new String[]{"001", "002", "003", "unknown", "", null}) {
+            rows.add(new AddressBookContact(role, crypto.encryptWithCheck("13800138000")));
+        }
+        Executor executor = mock(Executor.class);
+        when(executor.query(any(MappedStatement.class), any(), any(RowBounds.class),
+                any(ResultHandler.class))).thenReturn((List) rows);
+
+        interceptor.intercept(queryInvocation(executor,
+                statement(OLD_QUERY, SqlCommandType.SELECT,
+                        "select * from t_m_announce_address_book"), null));
+
+        for (AddressBookContact row : rows) {
+            assertTrue(row.mobile.startsWith("[#138****8000#VIEW:rt_"));
+        }
+        assertEquals(rows.size(), store.values.size());
+    }
+
+    @Test
+    public void strictModeMasksGeneralQueriesEvenWhenRevealIsDisabled() throws Throwable {
+        SymmetricalSecurityUtils crypto = new SymmetricalSecurityUtils(new PrefixGateway());
+        SensitiveRevealProcessor processor = new SensitiveRevealProcessor(crypto,
+                new RedisRevealTokenStore(new RecordingStore(), 300));
+        AESInterceptor interceptor = interceptor(processor, false, "001");
+        org.springframework.test.util.ReflectionTestUtils.setField(interceptor, "strictMode", true);
+        Contact row = new Contact(crypto.encryptWithCheck("13800138000"));
+        Executor executor = mock(Executor.class);
+        when(executor.query(any(MappedStatement.class), any(), any(RowBounds.class),
+                any(ResultHandler.class))).thenReturn((List) Collections.singletonList(row));
+
+        interceptor.intercept(queryInvocation(executor,
+                statement(DECRYPT_QUERY, SqlCommandType.SELECT, "select * from demo"), null));
+
+        assertTrue(row.mobile.startsWith("[#138****8000#VIEW:rt_"));
     }
 
     @Test(expected = IllegalArgumentException.class)

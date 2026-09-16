@@ -25,6 +25,17 @@ AddressBook branch, reveal processor, Redis token store, and reveal service. Rou
 copying, field transformation, role parsing, and property injection stay with those owners instead
 of introducing one-implementation policy or wiring classes.
 
+Strict mode additionally modifies the existing reveal controller and adds one
+Web-only `SensitiveCaptchaService`. `AESInterceptor` reads
+`sensitive.reveal.strict_mode` and passes it to the AddressBook branch: strict
+mode forces masking and bypasses the plaintext-role whitelist. The controller
+checks a session captcha before calling the unchanged Control reveal service.
+The Control reveal service now also emits INFO stage/result logs correlated with
+the Web-generated `revealRequestId`; its token and decryption behavior is unchanged.
+There is no new facade method, provider/consumer registration, captcha Redis
+adapter, or schema change. Production reuses its existing Kaptcha 2.3.2 dependency,
+`KaptchaConfig` / `Producer` bean, and Shiro session infrastructure.
+
 The token store delegates to the existing production `RedisCacheService` contract (`setex` and
 `get`). The service does not expose a batch API, so the adapter cannot claim pipeline semantics;
 it publishes clickable tokens only when every `setex` reports success.
@@ -45,6 +56,12 @@ production file boundary.
 - local compatibility copies under `com/epcc/commons/securityproxy`, `com/epcc/dubbo/result`,
   and the unchanged production annotation/constant/exception contracts copied into this mock
 - `application.properties`
+- `ark-web/src/local-mock/java/com/epcc/arkweb/mock/LocalKaptchaConfiguration.java`
+
+Both applications' local `application.properties` expose
+`SENSITIVE_REVEAL_STRICT_MODE`, default false. Production maintains the matching
+`sensitive.reveal.strict_mode` property separately; synchronize it across all Web
+and Control instances. Do not copy the local Kaptcha bean into production.
 
 Those sources live under `ark-control/src/local-mock/java` and are added only by the
 `local-sensitive-compat` Maven profile. The local profile also owns the mock app's interceptor

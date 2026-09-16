@@ -145,6 +145,16 @@ normal Shiro session, not a hard-coded CAS cookie. The crypto mock prefixes and
 Base64-encodes data; it is not encryption. Production excludes the demo and mock
 code and retains its own authentication, crypto, configuration, and Dubbo logs.
 
+Set `sensitive.reveal.strict_mode=true` on both Web and Control to require a
+Web-session image captcha before reveal and mask all AddressBook roles. Omission
+or false preserves the original mode. The local environment variable is
+`SENSITIVE_REVEAL_STRICT_MODE` in both applications. Browser clients read
+`GET /api/sensitive/reveal/options`, fetch a PNG from
+`POST /api/sensitive/reveal/captcha` with `{token}`, then submit
+`{token, captchaCode}` to the existing reveal endpoint. See
+[the strict-mode integration guide](docs/sensitive-reveal-strict-mode.md) for
+error handling, session requirements, and production integration boundaries.
+
 Streaming, sync, and scheduled py execution use `AGENT_MAX_RUN_SECONDS` (900
 seconds by default). Sync and scheduled return HTTP 504 with `execution_timeout`
 when the shared router-plus-Agent budget expires. Java uses the same setting

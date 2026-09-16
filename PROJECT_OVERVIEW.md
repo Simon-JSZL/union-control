@@ -249,6 +249,20 @@ fragment. The local simulation supplies a non-cryptographic `sensitiveProxy`
 under the default or explicit `local-sensitive-mock` profile. This substitute
 is excluded from production, which retains its existing real proxy.
 
+`sensitive.reveal.strict_mode` defaults to false and must have the same value
+on every Web and Control instance. When true, Control forces the existing
+masking flow even if `sensitive.reveal.enabled` is false, and AddressBook ignores
+its plaintext-role whitelist. Web requires a two-minute, user- and token-bound
+image captcha before calling the unchanged reveal service. Captchas are generated
+with the production Kaptcha `Producer` and stored only as an attribute of the
+existing Shiro login session; no captcha Redis adapter, database table, or Dubbo
+contract is added. A new image replaces the session's previous challenge and
+each submission consumes it, including failed attempts. The local JVM lock does
+not provide distributed atomic consumption: use session affinity for concurrent
+requests, and do not claim cross-node exactly-once verification. The existing
+production session DAO may itself use Redis; this feature does not replace it.
+See `docs/sensitive-reveal-strict-mode.md` for the browser contract and rollout.
+
 `agent_scheduled_task` and `agent_scheduled_task_run` persist task definitions
 and individual outcomes. The task table owns the natural-language prompt,
 schedule definition, state, timezone, and next due time. The run table owns one

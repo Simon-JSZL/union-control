@@ -14,6 +14,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.Map;
 import java.util.regex.Pattern;
+import java.util.UUID;
 
 @Service("sensitiveRevealService")
 public final class SensitiveRevealServiceImpl implements SensitiveRevealService {
@@ -31,24 +32,39 @@ public final class SensitiveRevealServiceImpl implements SensitiveRevealService 
     }
 
     public String reveal(String input) {
+        long started = System.nanoTime();
         Map<String, Object> request = AgentSupport.request(json, input);
+        Object rawRequestId = request.get("revealRequestId");
+        String requestId = rawRequestId instanceof String
+                && ((String) rawRequestId).matches("[A-Za-z0-9-]{1,64}")
+                ? (String) rawRequestId : UUID.randomUUID().toString();
+        LOG.info("Sensitive reveal Control received request_id={}", requestId);
         Object rawToken = request.get("token");
         String token = rawToken instanceof String ? (String) rawToken : null;
-        if (token == null || !TOKEN.matcher(token).matches()) throw new InvalidTokenException();
+        if (token == null || !TOKEN.matcher(token).matches()) {
+            LOG.info("Sensitive reveal Control rejected request_id={} reason=invalid_token", requestId);
+            throw new InvalidTokenException();
+        }
         String ciphertext;
         try {
             ciphertext = tokens.get(token);
         } catch (RedisRevealTokenStore.StoreUnavailableException error) {
+            LOG.info("Sensitive reveal Control failed request_id={} stage=token_lookup reason=store_unavailable", requestId);
             throw new StoreUnavailableException();
         }
-        if (ciphertext == null) throw new ExpiredTokenException();
+        if (ciphertext == null) {
+            LOG.info("Sensitive reveal Control rejected request_id={} reason=token_expired", requestId);
+            throw new ExpiredTokenException();
+        }
+        LOG.info("Sensitive reveal Control token resolved request_id={}", requestId);
         try {
             String plaintext = crypto.decryptWithCheckNoLog(ciphertext);
-            LOG.info("Sensitive reveal completed");
+            LOG.info("Sensitive reveal Control completed request_id={} elapsed_ms={}",
+                    requestId, (System.nanoTime() - started) / 1000000);
             return plaintext;
         } catch (CheckException | RuntimeException error) {
-            LOG.warn("Sensitive reveal decryption failed error_type={}",
-                    error.getClass().getSimpleName());
+            LOG.info("Sensitive reveal Control failed request_id={} stage=decrypt error_type={}",
+                    requestId, error.getClass().getSimpleName());
             throw new RevealDecryptionException();
         }
     }

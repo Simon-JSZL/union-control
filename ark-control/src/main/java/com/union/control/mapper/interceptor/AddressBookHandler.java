@@ -40,7 +40,11 @@ final class AddressBookHandler {
                         .replaceAll("t_m_announce_address_book_new"));
     }
 
-    void processResult(Object result, boolean revealEnabled) throws CheckException {
+    void processResult(Object result, boolean revealEnabled, boolean strictMode) throws CheckException {
+        if (strictMode) {
+            revealProcessor.process(result);
+            return;
+        }
         if (!revealEnabled) {
             revealProcessor.decrypt(result);
             return;

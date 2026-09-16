@@ -12,7 +12,13 @@ public interface SensitiveDataDemoMapper {
 
     List<Map<String, Object>> query();
 
+    int insertSaved(Map<String, Object> row);
+    int update(Map<String, Object> row);
+    Map<String, Object> queryById(@Param("id") long id);
+
     int insertAddressBook(SensitiveAddressBookDemo row);
 
     List<SensitiveAddressBookDemo> queryAddressBook();
+    int updateAddressBook(SensitiveAddressBookDemo row);
+    SensitiveAddressBookDemo queryAddressBookById(@Param("id") long id);
 }

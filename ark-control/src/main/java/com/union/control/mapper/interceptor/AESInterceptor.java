@@ -38,6 +38,8 @@ import java.util.function.Consumer;
 public class AESInterceptor implements Interceptor {
     private static final Set<String> ADDRESS_BOOK = statements(
             "com.union.control.mapper.SensitiveDataDemoMapper.insertAddressBook",
+            "com.union.control.mapper.SensitiveDataDemoMapper.updateAddressBook",
+            "com.union.control.mapper.SensitiveDataDemoMapper.queryAddressBookById",
             "com.union.control.mapper.SensitiveDataDemoMapper.queryAddressBook",
             "com.nucc.channel.ark.dao.mapper.announce.AnnounceAddressBookMapper.getAddressBookPageResult",
             "com.nucc.channel.ark.dao.mapper.announce.AnnounceAddressBookMapper.queryById",
@@ -51,6 +53,7 @@ public class AESInterceptor implements Interceptor {
             "com.nucc.channel.ark.dao.mapper.announce.AnnounceUserGroupRelationMapper.selectUserByGroupId");
     private static final Set<String> DECRYPT = statements(
             "com.union.control.mapper.SensitiveDataDemoMapper.query",
+            "com.union.control.mapper.SensitiveDataDemoMapper.queryById",
             "com.nucc.channel.ark.dao.mapper.announce.AnnounceAddressBookRecordMapper.selectPageResult",
             "com.nucc.channel.ark.dao.mapper.announce.ReformTrackMapper.queryReformTrackItemsById",
             "com.nucc.channel.ark.dao.mapper.announce.ReformTrackMapper.queryReformTrackItemsByConditions",
@@ -91,6 +94,8 @@ public class AESInterceptor implements Interceptor {
             "com.nucc.channel.ark.dao.mapper.announce.NotifyMapper.queryLastDashBoardNotify");
     private static final Set<String> ENCRYPT = statements(
             "com.union.control.mapper.SensitiveDataDemoMapper.insert",
+            "com.union.control.mapper.SensitiveDataDemoMapper.insertSaved",
+            "com.union.control.mapper.SensitiveDataDemoMapper.update",
             "com.nucc.channel.ark.dao.mapper.announce.AnnounceAddressBookRecordMapper.insert",
             "com.nucc.channel.ark.dao.mapper.announce.ReformTrackMapper.batchInsertReformTrackItems",
             "com.nucc.channel.ark.dao.mapper.announce.ReformTrackMapper.batchUpdateReformTrackItems",
@@ -153,12 +158,18 @@ public class AESInterceptor implements Interceptor {
         try {
             Object result = invocation.proceed();
             if (result == null) return null;
-            if (revealEnabled) processor.process(result);
+            if (revealEnabled || checkIfStrictMode()) processor.process(result);
             else processor.decrypt(result);
             return result;
         } finally {
             ((Executor) invocation.getTarget()).clearLocalCache();
         }
+    }
+
+    private boolean checkIfStrictMode(){
+        //use commonDDCache.getValueByType("UseStrictMode")
+        String mockResult = "1";
+        return mockResult.equals("1");
     }
 
     private Object interceptAddressBook(Invocation invocation, MappedStatement statement)
@@ -168,7 +179,7 @@ public class AESInterceptor implements Interceptor {
         if (statement.getSqlCommandType() != SqlCommandType.SELECT) return invocation.proceed();
         try {
             Object result = invocation.proceed();
-            if (result != null) addressBook.processResult(result, revealEnabled);
+            if (result != null) addressBook.processResult(result, revealEnabled, checkIfStrictMode());
             return result;
         } finally {
             ((Executor) invocation.getTarget()).clearLocalCache();
