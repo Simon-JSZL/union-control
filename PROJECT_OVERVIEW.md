@@ -249,6 +249,14 @@ fragment. The local simulation supplies a non-cryptographic `sensitiveProxy`
 under the default or explicit `local-sensitive-mock` profile. This substitute
 is excluded from production, which retains its existing real proxy.
 
+Production AddressBook submission keeps its existing manual encryption and
+MyBatis-Plus insertOrUpdateBatch flow. Only the service's three sensitive inputs
+(email and the existing two phone fields) are restored from complete reveal-token
+markers before the original validation/encryption. Do not add production write
+statements to the query interceptor or change production Mapper SQL for this feature.
+Expired/malformed markers reject submission. The local demo service illustrates
+restoration before its pre-existing local persistence path.
+
 `sensitive.reveal.strict_mode` defaults to false and must have the same value
 on every Web and Control instance. When true, Control forces the existing
 masking flow even if `sensitive.reveal.enabled` is false, and AddressBook ignores

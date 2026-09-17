@@ -86,14 +86,34 @@ public class SensitiveDataDemoServiceImpl implements SensitiveDataDemoService {
         row.setId(id(payload));
         row.setName(AgentSupport.text(payload, "name", 64, true));
         row.setRole(AgentSupport.text(payload, "role", 32, true));
-        row.setEmail(editableText(payload, "email", 255));
-        row.setTelephone(editableText(payload, "telephone", 32));
-        row.setMobileNumber(editableText(payload, "mobileNumber", 32));
+        row.setEmail(addressBookText(payload, "email", 255, com.nucc.channel.ark.common.util.Constant.REGEX_EMAIL));
+        row.setTelephone(addressBookText(payload, "telephone", 32, com.nucc.channel.ark.common.util.Constant.REGEX_TELEPHONE));
+        row.setMobileNumber(addressBookText(payload, "mobileNumber", 32, com.nucc.channel.ark.common.util.Constant.REGEX_MOBILE));
         if (row.getId() == null) mapper.insertAddressBook(row);
         else if (mapper.updateAddressBook(row) != 1) throw new IllegalArgumentException("记录不存在");
         SensitiveAddressBookDemo saved = mapper.queryAddressBookById(row.getId());
         if (saved == null) throw new IllegalStateException("保存结果不存在");
         return addressBookValue(saved);
+    }
+
+    /** Call before the existing validation/encryption/save flow; no mapper changes required. */
+    private String addressBookText(Map<String, Object> payload, String key, int max, String regex) {
+        Object raw = payload.get(key);
+        if (raw == null) return null;
+        if (!(raw instanceof String)) throw new IllegalArgumentException(key + " 非法");
+        String value = (String) raw;
+        if (value.isEmpty()) return value;
+        if (value.contains("[#") || value.contains("#VIEW:")) {
+            // AddressBook fields contain one complete value, never mixed text/fragments.
+            if (!MARKER.matcher(value).matches()) {
+                throw new IllegalArgumentException(key + " 脱敏标记无效，请刷新页面后重新编辑");
+            }
+            value = editableText(payload, key, max);
+        }
+        if (value.length() > max || !Pattern.matches(regex, value)) {
+            throw new IllegalArgumentException(key + " 格式不正确");
+        }
+        return value;
     }
 
     private String editableText(Map<String, Object> payload, String key, int max) {

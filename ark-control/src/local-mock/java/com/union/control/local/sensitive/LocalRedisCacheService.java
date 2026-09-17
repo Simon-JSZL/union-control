@@ -17,6 +17,13 @@ public final class LocalRedisCacheService extends RedisCacheService {
     }
 
     @Override
+    public String setexBatch(Map<String, String> batch, int time) {
+        long expiresAt = System.currentTimeMillis() + time * 1000L;
+        batch.forEach((key, value) -> values.put(key, new Value(value, expiresAt)));
+        return ResultUtil.SUCCESS_RESULT;
+    }
+
+    @Override
     public String get(String key) {
         Value value = values.get(key);
         if (value == null) return null;

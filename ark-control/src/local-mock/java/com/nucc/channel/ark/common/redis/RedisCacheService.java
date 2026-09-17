@@ -7,6 +7,9 @@ import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisSentinelPool;
 import redis.clients.jedis.Pipeline;
 import redis.clients.jedis.Response;
+import java.util.Map;
+import java.util.List;
+import java.util.ArrayList;
 
 /**
  * 使用Jedis原生连接redis哨兵
@@ -46,6 +49,27 @@ public class RedisCacheService {
             log.error("setex to redis error,key={},e={} ",key,e);
         }
         return ResultUtil.FAIL_RESULT;
+    }
+
+    /** Integration: add this method to the production RedisCacheService as well. */
+    public String setexBatch(Map<String, String> values, int time) {
+        if (values.isEmpty()) return ResultUtil.SUCCESS_RESULT;
+        try (Jedis jedis = jedisSentinelPool.getResource()) {
+            Pipeline pipeline = jedis.pipelined();
+            List<Response<String>> responses = new ArrayList<>(values.size());
+            for (Map.Entry<String, String> entry : values.entrySet()) {
+                responses.add(pipeline.setex(entry.getKey(), time, entry.getValue()));
+            }
+            pipeline.sync();
+            for (Response<String> response : responses) {
+                if (!ResultUtil.SUCCESS_RESULT.equals(response.get())) return ResultUtil.FAIL_RESULT;
+            }
+            return ResultUtil.SUCCESS_RESULT;
+        } catch (Exception error) {
+            log.warn("Redis batch write failed count={} error_type={}", values.size(),
+                    error.getClass().getSimpleName());
+            return ResultUtil.FAIL_RESULT;
+        }
     }
 
     public String get(String key) {

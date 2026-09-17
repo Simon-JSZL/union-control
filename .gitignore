@@ -5,3 +5,6 @@ target/
 *.log
 application.yml
 schema.sql
+
+# Keep tests locally, outside version control
+**/src/test/

@@ -11,7 +11,8 @@ public final class Constant {
     public static final Map flagMap = new HashMap();
 
     public static final String REGEX_MOBILE = "(?<!\\d)1[3-9]\\d{9}(?!\\d)";
-    public static final String REGEX_EMAIL = "[a-zA-Z0-9.%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}";
+    // Sync this fix to the production common module's Constant.REGEX_EMAIL on integration.
+    public static final String REGEX_EMAIL = "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}";
     public static final String REGEX_TELEPHONE = "(?<!\\d)0\\d{2,3}-?\\d{7,8}(?!\\d)";
     public static final String ENCRYPT_START = "#[";
     public static final String ENCRYPT_END = "]";

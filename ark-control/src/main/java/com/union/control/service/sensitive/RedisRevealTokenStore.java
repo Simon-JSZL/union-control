@@ -9,6 +9,8 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.List;
+import java.util.Map;
+import java.util.LinkedHashMap;
 
 @Component
 public final class RedisRevealTokenStore {
@@ -17,7 +19,7 @@ public final class RedisRevealTokenStore {
     private final int ttlSeconds;
 
     public RedisRevealTokenStore(RedisCacheService redis,
-            @Value("${sensitive.reveal.ttl-seconds:300}") long ttlSeconds) {
+            @Value("${sensitive.reveal.ttl-seconds:1800}") long ttlSeconds) {
         if (redis == null) throw new IllegalArgumentException("Redis service is required");
         if (ttlSeconds <= 0 || ttlSeconds > Integer.MAX_VALUE) {
             throw new IllegalArgumentException("Reveal TTL is out of range");
@@ -29,9 +31,12 @@ public final class RedisRevealTokenStore {
     boolean putAll(List<Entry> entries) {
         if (entries.isEmpty()) return true;
         try {
-            for (Entry entry : entries) {
-                if (!ResultUtil.SUCCESS_RESULT.equals(
-                        redis.setex(key(entry.token), ttlSeconds, entry.ciphertext))) return false;
+            for (int start = 0; start < entries.size(); start += 20) {
+                Map<String, String> batch = new LinkedHashMap<>();
+                for (Entry entry : entries.subList(start, Math.min(start + 20, entries.size()))) {
+                    batch.put(key(entry.token), entry.ciphertext);
+                }
+                if (!ResultUtil.SUCCESS_RESULT.equals(redis.setexBatch(batch, ttlSeconds))) return false;
             }
             return true;
         } catch (RuntimeException error) {
