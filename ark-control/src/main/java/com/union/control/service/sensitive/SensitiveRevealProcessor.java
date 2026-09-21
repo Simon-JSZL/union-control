@@ -151,6 +151,23 @@ public final class SensitiveRevealProcessor {
 
     private void transform(Object value, boolean encrypt, List<ValueTarget> revealTargets,
                            Set<Object> visited) throws CheckException {
+        if (value == null) return;
+        // ponytail: business inputs are a single row or one container of rows; no nested traversal.
+        if (value instanceof Iterable<?>) {
+            for (Object row : (Iterable<?>) value) {
+                transformRow(row, encrypt, revealTargets, visited);
+            }
+        } else if (value.getClass().isArray()) {
+            for (int i = 0; i < Array.getLength(value); i++) {
+                transformRow(Array.get(value, i), encrypt, revealTargets, visited);
+            }
+        } else {
+            transformRow(value, encrypt, revealTargets, visited);
+        }
+    }
+
+    private void transformRow(Object value, boolean encrypt, List<ValueTarget> revealTargets,
+                              Set<Object> visited) throws CheckException {
         if (value == null || isSimple(value.getClass()) || !visited.add(value)) return;
         if (value instanceof Map<?, ?>) {
             Map map = (Map) value;
@@ -174,25 +191,11 @@ public final class SensitiveRevealProcessor {
                 Object child = entry.getValue();
                 if (replacements != null && replacements.containsKey(child)) {
                     entry.setValue(replacements.get(child));
-                } else if (!(entry.getKey() instanceof String && MAP_KEYS.contains(entry.getKey())
-                        && child instanceof String)) {
-                    transform(child, encrypt, revealTargets, visited);
                 }
             }
             return;
         }
-        if (value instanceof Iterable<?>) {
-            for (Object child : (Iterable<?>) value) {
-                transform(child, encrypt, revealTargets, visited);
-            }
-            return;
-        }
-        if (value.getClass().isArray()) {
-            for (int i = 0; i < Array.getLength(value); i++) {
-                transform(Array.get(value, i), encrypt, revealTargets, visited);
-            }
-            return;
-        }
+        // Fields are obtained locally; accessibility changes are not shared with callers.
         for (Class<?> type = value.getClass(); type != null && type != Object.class;
              type = type.getSuperclass()) {
             for (Field field : type.getDeclaredFields()) {
@@ -217,26 +220,20 @@ public final class SensitiveRevealProcessor {
     }
 
     private static String readField(Object owner, Field field) {
-        boolean accessible = field.isAccessible();
         try {
             field.setAccessible(true);
             return (String) field.get(owner);
         } catch (IllegalAccessException error) {
             throw new IllegalStateException("Sensitive field is not accessible", error);
-        } finally {
-            field.setAccessible(accessible);
         }
     }
 
     private static void writeField(Object owner, Field field, String value) {
-        boolean accessible = field.isAccessible();
         try {
             field.setAccessible(true);
             field.set(owner, value);
         } catch (IllegalAccessException error) {
             throw new IllegalStateException("Sensitive field is not accessible", error);
-        } finally {
-            field.setAccessible(accessible);
         }
     }
 

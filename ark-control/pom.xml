@@ -18,6 +18,7 @@
     <properties>
         <java.version>1.8</java.version>
         <mysql.version>8.0.33</mysql.version>
+        <sensitive.test.output>${project.build.directory}/test-classes</sensitive.test.output>
     </properties>
 
     <dependencies>
@@ -81,7 +82,15 @@
     </dependencies>
 
     <build>
+        <testOutputDirectory>${sensitive.test.output}</testOutputDirectory>
         <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <testExcludes><testExclude>com/union/control/sensitive/**/*.java</testExclude></testExcludes>
+                </configuration>
+            </plugin>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
@@ -93,6 +102,39 @@
     </build>
 
     <profiles>
+        <profile>
+            <id>sensitive-tests</id>
+            <properties>
+                <sensitive.test.output>${project.build.directory}/sensitive-test-classes</sensitive.test.output>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-compiler-plugin</artifactId>
+                        <configuration>
+                            <testIncludes><testInclude>com/union/control/sensitive/**/*.java</testInclude></testIncludes>
+                            <testExcludes combine.self="override"/>
+                        </configuration>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.jacoco</groupId>
+                        <artifactId>jacoco-maven-plugin</artifactId>
+                        <version>0.8.6</version>
+                        <configuration>
+                            <includes>
+                                <include>com/union/control/mapper/interceptor/*</include>
+                                <include>com/union/control/service/sensitive/*</include>
+                            </includes>
+                        </configuration>
+                        <executions>
+                            <execution><id>sensitive-coverage-agent</id><goals><goal>prepare-agent</goal></goals></execution>
+                            <execution><id>sensitive-coverage-report</id><phase>test</phase><goals><goal>report</goal></goals></execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
         <profile>
             <id>local-sensitive-compat</id>
             <activation>

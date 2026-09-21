@@ -18,7 +18,8 @@ import org.apache.ibatis.plugin.Signature;
 import org.apache.ibatis.session.ResultHandler;
 import org.apache.ibatis.session.RowBounds;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -123,16 +124,13 @@ public class AESInterceptor implements Interceptor {
     private SensitiveRevealProcessor processor;
     @Autowired
     private AddressBookHandler addressBook;
-    @Value("${sensitive.reveal.enabled:false}")
-    private boolean revealEnabled;
+    private static final Logger log = LoggerFactory.getLogger(AESInterceptor.class);
 
     public AESInterceptor() {}
 
-    AESInterceptor(SensitiveRevealProcessor processor, AddressBookHandler addressBook,
-                   boolean revealEnabled) {
+    AESInterceptor(SensitiveRevealProcessor processor, AddressBookHandler addressBook) {
         this.processor = processor;
         this.addressBook = addressBook;
-        this.revealEnabled = revealEnabled;
     }
 
     @Override
@@ -158,12 +156,46 @@ public class AESInterceptor implements Interceptor {
         try {
             Object result = invocation.proceed();
             if (result == null) return null;
-            if (revealEnabled || checkIfStrictMode()) processor.process(result);
+            if (getRevealEnabled() || checkIfStrictMode()) processor.process(result);
             else processor.decrypt(result);
             return result;
         } finally {
             ((Executor) invocation.getTarget()).clearLocalCache();
         }
+    }
+
+    boolean getRevealEnabled() {
+        boolean flag = true;
+        try {
+            // 生产接入时在此赋值：flag = commonddcache.getRevealEnabled();
+        } catch (Exception e) {
+            log.warn("Failed to read reveal enabled; using default true", e);
+        }
+        return flag;
+    }
+
+    Set<String> getPlaintextRoles() {
+        String roles = "001,002,003";
+        try {
+            // 生产接入时在此赋值：roles = commonddcache.getAddressBookPlaintextRoles();
+            return parseRoles(roles);
+        } catch (Exception e) {
+            log.warn("Failed to read AddressBook plaintext roles; using defaults", e);
+        }
+        return parseRoles("001,002,003");
+    }
+
+    private static Set<String> parseRoles(String configuredRoles) {
+        Set<String> roles = new LinkedHashSet<>();
+        if (configuredRoles == null || configuredRoles.trim().isEmpty()) return roles;
+        for (String item : configuredRoles.split(",", -1)) {
+            String role = item.trim();
+            if (!role.matches("[A-Za-z0-9_-]{1,32}")) {
+                throw new IllegalArgumentException("Invalid AddressBook plaintext role");
+            }
+            roles.add(role);
+        }
+        return roles;
     }
 
     private boolean checkIfStrictMode(){
@@ -179,7 +211,13 @@ public class AESInterceptor implements Interceptor {
         if (statement.getSqlCommandType() != SqlCommandType.SELECT) return invocation.proceed();
         try {
             Object result = invocation.proceed();
-            if (result != null) addressBook.processResult(result, revealEnabled, checkIfStrictMode());
+            if (result != null) {
+                boolean revealEnabled = getRevealEnabled();
+                boolean strictMode = checkIfStrictMode();
+                Set<String> plaintextRoles = revealEnabled && !strictMode
+                        ? getPlaintextRoles() : Collections.emptySet();
+                addressBook.processResult(result, revealEnabled, strictMode, plaintextRoles);
+            }
             return result;
         } finally {
             ((Executor) invocation.getTarget()).clearLocalCache();

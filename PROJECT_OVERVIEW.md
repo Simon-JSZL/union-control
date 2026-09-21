@@ -259,7 +259,7 @@ restoration before its pre-existing local persistence path.
 
 `sensitive.reveal.strict_mode` defaults to false and must have the same value
 on every Web and Control instance. When true, Control forces the existing
-masking flow even if `sensitive.reveal.enabled` is false, and AddressBook ignores
+masking flow even if `getRevealEnabled()` returns false, and AddressBook ignores
 its plaintext-role whitelist. Web requires a two-minute, user- and token-bound
 image captcha before calling the unchanged reveal service. Captchas are generated
 with the production Kaptcha `Producer` and stored only as an attribute of the

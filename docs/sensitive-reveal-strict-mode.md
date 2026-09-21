@@ -13,8 +13,8 @@ sensitive.reveal.strict_mode=true
 该配置在启动时读取，修改后需重启。
 
 严格模式下，Web 在调用现有 reveal 服务前校验验证码；Control 强制使用已有脱敏流程，
-并忽略 addressbook 的 `sensitive.address-book.plaintext-roles` 白名单。
-即使 `sensitive.reveal.enabled=false`，严格模式仍对原拦截范围内的查询脱敏。
+并忽略 addressbook 的 `getPlaintextRoles()` 返回的白名单。
+即使 `getRevealEnabled()` 返回 false，严格模式仍对原拦截范围内的查询脱敏。
 脱敏字段、正则匹配范围、Mapper 路由和加密算法不扩展。
 
 配套前端位于 `../union-web`，已接入公共验证码弹窗和模式查询；联调页面为

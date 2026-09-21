@@ -1,6 +1,6 @@
 {
-  "name": "union-web",
-  "version": "1.3.0",
+  "name": "union-ark-web",
+  "version": "1.1.4",
   "description": "Ark Web and Ark Control Dubbo applications for Union Agent",
   "files": [
     "ark-control-facade",
@@ -10,7 +10,16 @@
     "!ark-control/target",
     "!ark-web/target",
     "PROJECT_OVERVIEW.md",
-    "pom.xml"
+    "pom.xml",
+    "!ark-control-facade/src/test",
+    "!ark-control/src/test",
+    "!ark-web/src/test",
+    "!ark-control/src/main/resources/application.yml",
+    "!ark-web/src/main/resources/application.yml",
+    "!ark-control/src/main/resources/application.properties",
+    "!ark-web/src/main/resources/application.properties",
+    "!ark-control/src/main/resources/schema.sql",
+    "docs/address-book-save-production.md"
   ],
   "scripts": {
     "test": "mvn test"

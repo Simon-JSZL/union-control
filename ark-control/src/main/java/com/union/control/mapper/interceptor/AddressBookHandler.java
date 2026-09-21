@@ -3,13 +3,11 @@ package com.union.control.mapper.interceptor;
 import com.nucc.channel.ark.common.exception.CheckException;
 import com.union.control.service.sensitive.SensitiveRevealProcessor;
 import org.apache.ibatis.mapping.MappedStatement;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.lang.reflect.Array;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -24,13 +22,10 @@ final class AddressBookHandler {
             Pattern.compile("(?<!\\S)t_m_announce_address_book(?!_)");
 
     private final SensitiveRevealProcessor revealProcessor;
-    private final Set<String> plaintextRoles;
 
-    AddressBookHandler(SensitiveRevealProcessor revealProcessor,
-                       @Value("${sensitive.address-book.plaintext-roles:}") String configuredRoles) {
+    AddressBookHandler(SensitiveRevealProcessor revealProcessor) {
         if (revealProcessor == null) throw new IllegalArgumentException("Reveal processor is required");
         this.revealProcessor = revealProcessor;
-        this.plaintextRoles = parseRoles(configuredRoles);
     }
 
     MappedStatement prepare(MappedStatement statement, Object parameter) throws CheckException {
@@ -40,7 +35,8 @@ final class AddressBookHandler {
                         .replaceAll("t_m_announce_address_book_new"));
     }
 
-    void processResult(Object result, boolean revealEnabled, boolean strictMode) throws CheckException {
+    void processResult(Object result, boolean revealEnabled, boolean strictMode,
+                       Set<String> plaintextRoles) throws CheckException {
         if (strictMode) {
             revealProcessor.process(result);
             return;
@@ -53,7 +49,7 @@ final class AddressBookHandler {
         List<Object> plaintextRows = new ArrayList<>();
         List<Object> protectedRows = new ArrayList<>();
         for (Object row : rows(result)) {
-            if (allowPlaintext(row)) plaintextRows.add(row);
+            if (allowPlaintext(row, plaintextRoles)) plaintextRows.add(row);
             else protectedRows.add(row);
         }
         revealProcessor.decrypt(plaintextRows);
@@ -73,7 +69,7 @@ final class AddressBookHandler {
         return rows;
     }
 
-    private boolean allowPlaintext(Object row) {
+    private boolean allowPlaintext(Object row, Set<String> plaintextRoles) {
         if (row == null) return false;
         try {
             Object value;
@@ -90,16 +86,4 @@ final class AddressBookHandler {
         }
     }
 
-    private static Set<String> parseRoles(String configuredRoles) {
-        Set<String> roles = new LinkedHashSet<>();
-        if (configuredRoles == null || configuredRoles.trim().isEmpty()) return roles;
-        for (String item : configuredRoles.split(",", -1)) {
-            String role = item.trim();
-            if (!role.matches("[A-Za-z0-9_-]{1,32}")) {
-                throw new IllegalArgumentException("Invalid AddressBook plaintext role");
-            }
-            roles.add(role);
-        }
-        return roles;
-    }
 }
