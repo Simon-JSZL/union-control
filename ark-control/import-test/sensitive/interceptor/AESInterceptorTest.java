@@ -1,6 +1,8 @@
 package com.union.control.mapper.interceptor;
 
 import com.nucc.channel.ark.common.util.Constant;
+import com.nucc.channel.ark.common.util.ResultUtil;
+import com.union.control.mapper.SensitiveAddressBookDemo;
 import com.union.control.service.sensitive.SensitiveRevealProcessor;
 import com.union.control.service.sensitive.RedisRevealTokenStore;
 import com.union.control.utils.security.SymmetricalSecurityUtils;
@@ -45,10 +47,10 @@ public class AESInterceptorTest {
     }
     private void enabled() { Constant.flagMap.put("interceptorItems", "[\"SensitiveDataDemoMapper\"]"); }
 
-    @Test public void assertUnknownAndDisabledStatementsPassThrough() throws Throwable {
+    @Test public void assertUnknownStatementsPassThroughAndKnownReadsClearCache() throws Throwable {
         for (String config : Arrays.asList("[]", "null", "[\"\",\"OtherMapper\"]")) {
             Constant.flagMap.put("interceptorItems", config);
-            MappedStatement statement = statement(PREFIX + "query", SqlCommandType.SELECT, true);
+            MappedStatement statement = statement(PREFIX + "query", SqlCommandType.SELECT, false);
             List<Object> result = Collections.singletonList(config);
             when(executor.query(statement, null, RowBounds.DEFAULT, null)).thenReturn(result);
             assertSame(result, interceptor.intercept(query(statement, null)));
@@ -57,7 +59,7 @@ public class AESInterceptorTest {
         when(executor.update(unknown, null)).thenReturn(7);
         assertEquals(7, interceptor.intercept(update(unknown, null)));
         verifyZeroInteractions(crypto, redis);
-        verify(executor, never()).clearLocalCache();
+        verify(executor, times(3)).clearLocalCache();
     }
 
     @Test public void assertDefaultConfigurationAndUnrelatedFlagsHaveSameBehavior() throws Throwable {
@@ -74,12 +76,157 @@ public class AESInterceptorTest {
         parameter.put("email", "plain");
         when(crypto.encryptWithCheck("plain")).thenReturn("encrypted");
         MappedStatement statement = statement(PREFIX + "insert", SqlCommandType.INSERT, false);
-        when(executor.update(statement, parameter)).thenReturn(3);
+        when(executor.update(statement, parameter)).thenAnswer(call -> {
+            assertEquals("encrypted", parameter.get("email"));
+            return 3;
+        });
         assertEquals(3, interceptor.intercept(update(statement, parameter)));
         org.mockito.InOrder order = inOrder(crypto, executor);
-        assertEquals("encrypted", parameter.get("email"));
+        assertEquals("plain", parameter.get("email"));
         order.verify(crypto).encryptWithCheck("plain");
         order.verify(executor).update(statement, parameter);
+    }
+
+    @Test public void assertMaskedWriteFailuresNeverExecuteSql() throws Throwable {
+        enabled();
+        String token = "rt_" + Base64.getUrlEncoder().withoutPadding().encodeToString(new byte[32]);
+        String marker = "[#138****5678#VIEW:" + token + "]";
+        for (String id : Arrays.asList("update", "insert", "updateAddressBook")) {
+            for (String value : Arrays.asList(marker, "[#****]", "[#138****5678]", "[#138****5678", "[#138****5678#VIEW:bad]",
+                    "[#a***@example.com]", "[#021****5678]", marker.substring(0, marker.length() - 1))) {
+                Map<String, Object> parameter = new HashMap<>();
+                parameter.put("phoneNumber", value);
+                try {
+                    interceptor.intercept(update(statement(PREFIX + id, SqlCommandType.UPDATE, false), parameter));
+                    fail("Unsafe masked input must fail before SQL");
+                } catch (IllegalArgumentException expected) { }
+            }
+        }
+        when(redis.get(anyString())).thenThrow(new IllegalStateException("offline"));
+        assertWriteRejected(marker);
+        reset(redis);
+        when(redis.get(anyString())).thenReturn("fragment");
+        when(crypto.decryptWithCheckNoLog("fragment"))
+                .thenThrow(mock(com.nucc.channel.ark.common.exception.CheckException.class));
+        assertWriteRejected(marker);
+        verifyZeroInteractions(executor);
+    }
+
+    private void assertWriteRejected(String marker) throws Throwable {
+        Map<String, Object> parameter = new HashMap<>();
+        parameter.put("phoneNumber", marker);
+        try {
+            interceptor.intercept(update(statement(PREFIX + "update", SqlCommandType.UPDATE, false), parameter));
+            fail("Restoration failure must fail before SQL");
+        } catch (IllegalArgumentException expected) { }
+    }
+
+    @Test public void assertNonMarkerTextIsEncryptedAndWrittenAsPlaintext() throws Throwable {
+        enabled();
+        for (String value : Arrays.asList("****", "备注 **** 保留", "138****5678", "[#", "[#broken",
+                "#VIEW:bad]", "说明 [#普通文本] 保留", "[#ordinary#VIEW:rt_example]", "[#123**456]")) {
+            Map<String, Object> parameter = new HashMap<>();
+            parameter.put("phoneNumber", value);
+            when(crypto.encryptWithCheck(value)).thenReturn("cipher:" + value);
+            MappedStatement statement = statement(PREFIX + "update", SqlCommandType.UPDATE, false);
+            when(executor.update(statement, parameter)).thenAnswer(call -> {
+                assertEquals("cipher:" + value, parameter.get("phoneNumber"));
+                return 1;
+            });
+            interceptor.intercept(update(statement, parameter));
+            assertEquals(value, parameter.get("phoneNumber"));
+            verify(executor).update(statement, parameter);
+        }
+        verifyZeroInteractions(redis);
+    }
+
+    @Test public void assertRestoresMapMarkersBeforeSql() throws Throwable {
+        enabled();
+        String token = "rt_" + Base64.getUrlEncoder().withoutPadding().encodeToString(new byte[32]);
+        Map<String, Object> parameter = new HashMap<>();
+        parameter.put("phoneNumber", "[#138****5678#VIEW:" + token + "]");
+        when(redis.get(anyString())).thenReturn("fragment");
+        when(crypto.decryptWithCheckNoLog("fragment")).thenReturn("13812345678");
+        when(crypto.encryptWithCheck("13812345678")).thenReturn("saved-cipher");
+        MappedStatement statement = statement(PREFIX + "update", SqlCommandType.UPDATE, false);
+        String original = (String) parameter.get("phoneNumber");
+        when(executor.update(statement, parameter)).thenAnswer(call -> {
+            assertEquals("saved-cipher", parameter.get("phoneNumber"));
+            return 1;
+        });
+        interceptor.intercept(update(statement, parameter));
+        assertEquals(original, parameter.get("phoneNumber"));
+        org.mockito.InOrder order = inOrder(crypto, executor);
+        order.verify(crypto).decryptWithCheckNoLog("fragment");
+        order.verify(crypto).encryptWithCheck("13812345678");
+        order.verify(executor).update(statement, parameter);
+    }
+
+    @Test public void assertWriteEncryptionCannotBeDisabledAndInputsCanBeRetried() throws Throwable {
+        Map<String, Object> row = new HashMap<>();
+        row.put("email", "plain");
+        when(crypto.encryptWithCheck("plain")).thenReturn("cipher");
+        MappedStatement statement = statement(PREFIX + "update", SqlCommandType.UPDATE, false);
+        when(executor.update(statement, row)).thenAnswer(call -> {
+            assertEquals("cipher", row.get("email"));
+            row.put("id", 7L);
+            return 1;
+        });
+        for (String config : Arrays.asList("[]", "null", "[\"Other\"]", "invalid-json")) {
+            Constant.flagMap.put("interceptorItems", config);
+            assertEquals(1, interceptor.intercept(update(statement, row)));
+            assertEquals("plain", row.get("email"));
+            assertEquals(7L, row.get("id"));
+        }
+        doThrow(new IllegalStateException("SQL failed")).when(executor).update(statement, row);
+        try { interceptor.intercept(update(statement, row)); fail("Expected SQL failure"); }
+        catch (InvocationTargetException expected) { }
+        assertEquals("plain", row.get("email"));
+        verifyZeroInteractions(redis);
+    }
+
+    @Test public void assertDisabledReadSwitchReturnsPlaintextThatCanBeSaved() throws Throwable {
+        Constant.flagMap.put("interceptorItems", "[]");
+        AESInterceptor nonStrict = spy(interceptor);
+        doReturn(false).when(nonStrict).checkIfStrictMode();
+        Map<String, Object> row = new HashMap<>();
+        row.put("email", "cipher");
+        when(crypto.decryptWithCheckNoLog("cipher")).thenReturn("a@example.com");
+        when(crypto.encryptWithCheck("a@example.com")).thenReturn("new-cipher");
+        MappedStatement read = statement(PREFIX + "query", SqlCommandType.SELECT, false);
+        when(executor.query(read, null, RowBounds.DEFAULT, null)).thenReturn(Collections.singletonList(row));
+        nonStrict.intercept(query(read, null));
+        assertEquals("a@example.com", row.get("email"));
+        MappedStatement write = statement(PREFIX + "update", SqlCommandType.UPDATE, false);
+        when(executor.update(write, row)).thenAnswer(call -> {
+            assertEquals("new-cipher", row.get("email"));
+            return 1;
+        });
+        nonStrict.intercept(update(write, row));
+        assertEquals("a@example.com", row.get("email"));
+        verifyZeroInteractions(redis);
+    }
+
+    @Test public void assertInvalidEncryptionResultsAndFailuresNeverExecuteSql() throws Throwable {
+        for (String result : Arrays.asList(null, "", "plain")) {
+            when(crypto.encryptWithCheck("plain")).thenReturn(result);
+            Map<String, Object> row = new HashMap<>();
+            row.put("email", "plain");
+            try {
+                interceptor.intercept(update(statement(PREFIX + "update", SqlCommandType.UPDATE, false), row));
+                fail("Invalid encryption result reached SQL");
+            } catch (IllegalStateException expected) { }
+            assertEquals("plain", row.get("email"));
+        }
+        when(crypto.encryptWithCheck("plain")).thenThrow(mock(com.nucc.channel.ark.common.exception.CheckException.class));
+        Map<String, Object> row = new HashMap<>();
+        row.put("email", "plain");
+        try {
+            interceptor.intercept(update(statement(PREFIX + "update", SqlCommandType.UPDATE, false), row));
+            fail("Encryption failure reached SQL");
+        } catch (com.nucc.channel.ark.common.exception.CheckException expected) { }
+        assertEquals("plain", row.get("email"));
+        verifyZeroInteractions(executor);
     }
 
     @Test public void assertQueryDisablesCacheProcessesRowsAndAlwaysClearsLocalCache() throws Throwable {
@@ -145,12 +292,15 @@ public class AESInterceptorTest {
         Map<String, Object> parameter = new HashMap<>();
         parameter.put("email", "plain");
         when(crypto.encryptWithCheck("plain")).thenReturn("encrypted");
-        when(executor.update(any(MappedStatement.class), eq(parameter))).thenReturn(2);
+        when(executor.update(any(MappedStatement.class), eq(parameter))).thenAnswer(call -> {
+            assertEquals("encrypted", parameter.get("email"));
+            return 2;
+        });
         Invocation invocation = update(original, parameter);
         assertEquals(2, interceptor.intercept(invocation));
         assertNotSame(original, invocation.getArgs()[0]);
         assertFalse(((MappedStatement) invocation.getArgs()[0]).isUseCache());
-        assertEquals("encrypted", parameter.get("email"));
+        assertEquals("plain", parameter.get("email"));
         verify(executor, never()).clearLocalCache();
     }
 
@@ -175,6 +325,63 @@ public class AESInterceptorTest {
         assertSame(rows, disabled.intercept(query(statement, null)));
         assertEquals("[#a***@example.com]", row.get("email"));
         verify(crypto, times(2)).decryptWithCheckNoLog("cipher");
+    }
+
+    @Test public void addressBookMaskingPreservesRowsAndIdsWithThreeSensitiveFields() throws Throwable {
+        when(crypto.decryptWithCheckNoLog("email-cipher")).thenReturn("alice@example.com");
+        when(crypto.decryptWithCheckNoLog("mobile-cipher")).thenReturn("13812345678");
+        when(crypto.decryptWithCheckNoLog("tel-cipher")).thenReturn("021-12345678");
+        when(crypto.encryptWithCheck(anyString())).thenReturn("fragment-cipher");
+        when(redis.setexBatch(anyMap(), anyInt())).thenReturn(ResultUtil.SUCCESS_RESULT);
+        Configuration config = new Configuration();
+        MappedStatement original = new MappedStatement.Builder(config,
+                "com.nucc.channel.ark.dao.mapper.announce.AnnounceAddressBookMapper.getAddressBookPageResult",
+                p -> new BoundSql(config, "select * from t_m_announce_address_book",
+                        Collections.emptyList(), p), SqlCommandType.SELECT).build();
+        for (boolean mapRows : new boolean[]{true, false}) {
+            List<Object> rows = new ArrayList<>();
+            for (long id = 1; id <= 100; id++) {
+                if (mapRows) {
+                    Map<String, Object> row = new HashMap<>();
+                    row.put("id", id);
+                    row.put("email", "email-cipher");
+                    row.put("mobileNumber", "mobile-cipher");
+                    row.put("telNumber", "tel-cipher");
+                    rows.add(row);
+                } else {
+                    SensitiveAddressBookDemo row = new SensitiveAddressBookDemo();
+                    row.setId(id);
+                    row.setEmail("email-cipher");
+                    row.setMobileNumber("mobile-cipher");
+                    row.setTelephone("tel-cipher");
+                    rows.add(row);
+                }
+            }
+            List<Object> before = new ArrayList<>(rows);
+            when(executor.query(any(MappedStatement.class), isNull(), eq(RowBounds.DEFAULT),
+                    isNull(ResultHandler.class))).thenReturn(rows);
+            Invocation invocation = query(original, null);
+            assertSame(rows, interceptor.intercept(invocation));
+            assertEquals(100, rows.size());
+            assertEquals("select * from t_m_announce_address_book_new",
+                    ((MappedStatement) invocation.getArgs()[0]).getBoundSql(null).getSql());
+            for (int i = 0; i < rows.size(); i++) {
+                assertSame(before.get(i), rows.get(i));
+                Object row = rows.get(i);
+                assertEquals(Long.valueOf(i + 1), mapRows ? ((Map) row).get("id")
+                        : ((SensitiveAddressBookDemo) row).getId());
+                List<String> fields = mapRows ? Arrays.asList((String) ((Map) row).get("email"),
+                        (String) ((Map) row).get("mobileNumber"), (String) ((Map) row).get("telNumber"))
+                        : Arrays.asList(((SensitiveAddressBookDemo) row).getEmail(),
+                        ((SensitiveAddressBookDemo) row).getMobileNumber(),
+                        ((SensitiveAddressBookDemo) row).getTelephone());
+                for (String field : fields) assertTrue(field, field.contains("#VIEW:rt_"));
+            }
+        }
+        // Each query resolves three distinct ciphertexts and reuses the stored whole-field values.
+        verify(crypto, times(6)).decryptWithCheckNoLog(anyString());
+        verify(crypto, never()).encryptWithCheck(anyString());
+        verify(redis, times(2)).setexBatch(anyMap(), eq(1800));
     }
 
     @Test public void assertCopyRetainsMetadataAndAdditionalParameters() {

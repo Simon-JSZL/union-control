@@ -65,12 +65,12 @@ public class SensitiveRevealProcessorTest {
     }
 
     @Test
-    public void assertTransformsFlatMapRowsAndIdentityAliases() throws Exception {
+    public void assertTransformsFlatMapRowsWithoutChangingOrdinaryAliases() throws Exception {
         Map<Object, Object> map = new LinkedHashMap<>();
         String shared = new String("phone");
         map.put("mobileNumber", shared);
         map.put("alias", shared);
-        map.put("email", 7);
+        map.put("count", 7);
         map.put(42, "ordinary");
         Map<String, Object> nested = new LinkedHashMap<>();
         nested.put("telNumber", "telephone");
@@ -79,7 +79,7 @@ public class SensitiveRevealProcessorTest {
         when(crypto.encryptWithCheck("telephone")).thenReturn("encrypted-tel");
         processor.encrypt(rows);
         assertEquals("encrypted", map.get("mobileNumber"));
-        assertEquals("encrypted", map.get("alias"));
+        assertEquals("phone", map.get("alias"));
         processor.encrypt(new Object[]{nested, null, true, 'x', Thread.State.NEW, new Object()});
         assertEquals("encrypted-tel", nested.get("telNumber"));
         verify(crypto).encryptWithCheck("phone");
@@ -87,19 +87,20 @@ public class SensitiveRevealProcessorTest {
         when(crypto.decryptWithCheckNoLog("encrypted-tel")).thenReturn("telephone");
         processor.decrypt(rows);
         assertEquals("phone", map.get("mobileNumber"));
-        assertEquals(7, map.get("email"));
+        assertEquals(7, map.get("count"));
         assertEquals("ordinary", map.get(42));
     }
 
     @Test
-    public void assertDoesNotTraverseNestedMapValues() throws Exception {
+    public void assertEncryptsNestedMapValues() throws Exception {
         Map<String, Object> nested = new HashMap<>();
         nested.put("email", "cipher");
         Map<String, Object> row = new HashMap<>();
         row.put("details", nested);
+        when(crypto.encryptWithCheck("cipher")).thenReturn("encrypted");
         processor.encrypt(Collections.singletonList(row));
-        assertEquals("cipher", nested.get("email"));
-        verifyZeroInteractions(crypto, redis);
+        assertEquals("encrypted", nested.get("email"));
+        verifyZeroInteractions(redis);
     }
 
     @Test
@@ -170,10 +171,10 @@ public class SensitiveRevealProcessorTest {
     public void assertRevealMasksFragmentWhenEncryptionFails() throws Exception {
         Map<String, Object> map = new HashMap<>();
         map.put("email", "cipher");
-        when(crypto.decryptWithCheckNoLog("cipher")).thenReturn("alice@example.com");
+        when(crypto.decryptWithCheckNoLog("cipher")).thenReturn("contact alice@example.com");
         when(crypto.encryptWithCheck(anyString())).thenThrow(mock(CheckException.class));
         processor.process(map);
-        assertEquals("[#a***@example.com]", map.get("email"));
+        assertEquals("contact [#a***@example.com]", map.get("email"));
         verifyZeroInteractions(redis);
     }
 
@@ -185,12 +186,12 @@ public class SensitiveRevealProcessorTest {
         Plain record = new Plain();
         record.plain = "bad";
         processor.process(Arrays.asList(map, record));
-        assertEquals("****", map.get("email"));
-        assertEquals("****", record.plain);
+        assertEquals("[#****]", map.get("email"));
+        assertEquals("[#****]", record.plain);
         when(crypto.decryptWithCheckNoLog("runtime")).thenThrow(new IllegalArgumentException("bad"));
         record.plain = "runtime";
         processor.process(record);
-        assertEquals("****", record.plain);
+        assertEquals("[#****]", record.plain);
     }
 
     @Test
@@ -272,6 +273,242 @@ public class SensitiveRevealProcessorTest {
         assertEquals("value", read.invoke(null, owner, field));
         write.invoke(null, owner, field, "updated");
         assertEquals("updated", read.invoke(null, owner, field));
+    }
+
+    @Test
+    public void assertReadEditSubmitRoundTripPreservesMultipleFragments() throws Exception {
+        Map<String, String> stored = new HashMap<>();
+        when(redis.setexBatch(anyMap(), eq(1800))).thenAnswer(call -> {
+            stored.putAll((Map<String, String>) call.getArguments()[0]);
+            return ResultUtil.SUCCESS_RESULT;
+        });
+        when(redis.get(anyString())).thenAnswer(call -> stored.get(call.getArguments()[0]));
+        when(crypto.encryptWithCheck(anyString())).thenAnswer(call -> "enc:" + call.getArguments()[0]);
+        when(crypto.decryptWithCheckNoLog(anyString())).thenAnswer(call ->
+                ((String) call.getArguments()[0]).substring(4));
+        String plaintext = "备注 [#普通文本] #VIEW:说明 **** call 13812345678 or alice@example.com today";
+        Map<String, Object> row = new HashMap<>();
+        row.put("phoneNumber", plaintext);
+        processor.encrypt(row);
+        processor.process(row);
+        assertTrue(((String) row.get("phoneNumber")).contains("#VIEW:"));
+        processor.encrypt(row);
+        assertEquals("enc:" + plaintext, row.get("phoneNumber"));
+    }
+
+    @Test
+    public void assertRestoresMarkersBeforeEveryAnnotationEncryption() throws Exception {
+        String token = "rt_" + Base64.getUrlEncoder().withoutPadding().encodeToString(new byte[32]);
+        String marker = "[#138****5678#VIEW:" + token + "]";
+        when(redis.get(RedisRevealTokenStore.key(token))).thenReturn("fragment");
+        when(crypto.decryptWithCheckNoLog("fragment")).thenReturn("13812345678");
+        when(crypto.encryptWithCheck("13812345678")).thenReturn("ordinary-cipher");
+        when(crypto.encryptWithTag("call 13812345678 / 13812345678")).thenReturn("tag-cipher");
+        when(crypto.encryptLongString("13812345678", 3)).thenReturn("long-cipher");
+        Record record = new Record();
+        record.plain = marker;
+        record.tagged = "call " + marker + " / " + marker;
+        record.longText = marker;
+        processor.encrypt(record);
+        assertEquals("ordinary-cipher", record.plain);
+        assertEquals("tag-cipher", record.tagged);
+        assertEquals("long-cipher", record.longText);
+    }
+
+    @Test
+    public void assertMyBatisContainersEncryptOnceWithoutChangingOrdinaryMapKeys() throws Exception {
+        when(crypto.encryptWithCheck("plain")).thenReturn("cipher");
+        Plain row = new Plain();
+        row.plain = "plain";
+        List<Plain> rows = Arrays.asList(row, row);
+        org.apache.ibatis.binding.MapperMethod.ParamMap<Object> parameters =
+                new org.apache.ibatis.binding.MapperMethod.ParamMap<>();
+        parameters.put("list", rows);
+        parameters.put("collection", rows);
+        parameters.put("param1", rows);
+        processor.encrypt(parameters);
+        assertEquals("cipher", row.plain);
+        verify(crypto, times(1)).encryptWithCheck("plain");
+
+        Map<String, Object> nested = new LinkedHashMap<>();
+        String shared = new String("plain");
+        nested.put("email", shared);
+        nested.put("name", shared);
+        parameters.clear();
+        parameters.put("paramMap", nested);
+        parameters.put("param1", nested);
+        processor.encrypt(parameters);
+        assertEquals("cipher", nested.get("email"));
+        assertEquals("plain", nested.get("name"));
+    }
+
+    @Test
+    public void assertEncryptionFailureLeavesEntireInputUnchanged() throws Exception {
+        Plain first = new Plain();
+        first.plain = "plain";
+        Plain second = new Plain();
+        second.plain = "[#138****5678]";
+        when(crypto.encryptWithCheck("plain")).thenReturn("cipher");
+        try {
+            processor.encrypt(Arrays.asList(first, second));
+            fail("Unresolved marker must reject whole write");
+        } catch (IllegalArgumentException expected) { }
+        assertEquals("plain", first.plain);
+        assertEquals("[#138****5678]", second.plain);
+    }
+
+    @Test
+    public void assertNumericSensitiveMapValuesAreRejected() throws Exception {
+        Map<String, Object> row = new HashMap<>();
+        row.put("phoneNumber", 13812345678L);
+        try { processor.encrypt(row); fail("Numeric sensitive values cannot bypass encryption"); }
+        catch (IllegalArgumentException expected) { }
+        assertEquals(13812345678L, row.get("phoneNumber"));
+    }
+
+    @Test
+    public void assertFailedApplyRollsBackPreviouslyChangedRows() throws Exception {
+        Plain first = new Plain();
+        first.plain = "plain";
+        when(crypto.encryptWithCheck("plain")).thenReturn("cipher");
+        Map<String, String> immutable = Collections.singletonMap("email", "plain");
+        try {
+            processor.encrypt(Arrays.asList(first, immutable));
+            fail("Immutable parameter must fail before SQL");
+        } catch (UnsupportedOperationException expected) { }
+        assertEquals("plain", first.plain);
+    }
+
+    @Test
+    public void assertMyBatisScalarAliasesAndTokenMaskMismatch() throws Exception {
+        org.apache.ibatis.binding.MapperMethod.ParamMap<Object> row =
+                new org.apache.ibatis.binding.MapperMethod.ParamMap<>();
+        String email = new String("plain");
+        row.put("email", email);
+        row.put("param1", email);
+        when(crypto.encryptWithCheck("plain")).thenReturn("cipher");
+        Runnable restore = processor.encryptForExecution(row);
+        assertEquals("cipher", row.get("email"));
+        assertEquals("cipher", row.get("param1"));
+        restore.run();
+        assertEquals("plain", row.get("param1"));
+
+        row.put("email", "[#138****5678#VIEW:rt_" +
+                Base64.getUrlEncoder().withoutPadding().encodeToString(new byte[32]) + "]");
+        when(redis.get(anyString())).thenReturn("fragment");
+        when(crypto.decryptWithCheckNoLog("fragment")).thenReturn("13912345678");
+        try { processor.encrypt(row); fail("Mismatched token must not replace another displayed value"); }
+        catch (IllegalArgumentException expected) { }
+    }
+
+    @Test public void readDedupIsQueryLocalCodecSpecificAndTokensContainOnlyOneFragment() throws Exception {
+        when(crypto.decryptWithCheckNoLog("same-cipher")).thenReturn("alice@example.com");
+        when(crypto.decryptWithTag("same-cipher")).thenReturn("call 13812345678 / 13812345678");
+        when(crypto.decryptLongString("same-cipher")).thenReturn("call 13812345678");
+        when(crypto.encryptWithCheck("13812345678")).thenReturn("phone-fragment-cipher");
+        when(redis.setexBatch(anyMap(), eq(1800))).thenReturn(ResultUtil.SUCCESS_RESULT);
+        String previousMarker = null;
+        for (int query = 0; query < 2; query++) {
+            Record first = new Record();
+            Record second = new Record();
+            first.plain = first.tagged = first.longText = "same-cipher";
+            second.plain = second.tagged = second.longText = "same-cipher";
+            List<Record> rows = Arrays.asList(first, second, first);
+            processor.process(rows);
+            assertEquals(3, rows.size());
+            assertSame(first, rows.get(2));
+            assertEquals(first.plain, second.plain);
+            assertEquals(first.tagged, second.tagged);
+            String phoneMarker = first.longText.substring("call ".length());
+            assertEquals("call " + phoneMarker + " / " + phoneMarker, first.tagged);
+            assertTrue(first.plain.contains("#VIEW:"));
+            if (previousMarker != null) assertNotEquals(previousMarker, first.plain);
+            previousMarker = first.plain;
+        }
+        verify(crypto, times(2)).decryptWithCheckNoLog("same-cipher");
+        verify(crypto, times(2)).decryptWithTag("same-cipher");
+        verify(crypto, times(2)).decryptLongString("same-cipher");
+        verify(crypto, times(2)).encryptWithCheck("13812345678");
+        verify(crypto, never()).encryptWithCheck("alice@example.com");
+        ArgumentCaptor<Map> batches = ArgumentCaptor.forClass(Map.class);
+        verify(redis, times(2)).setexBatch(batches.capture(), eq(1800));
+        for (Map batch : batches.getAllValues()) {
+            assertEquals(2, batch.size());
+            assertTrue(batch.containsValue("same-cipher"));
+            assertTrue(batch.containsValue("phone-fragment-cipher"));
+        }
+    }
+
+    @Test public void repeatedDecryptionFailureIsAttemptedOnceAndRetriedOnNextQuery() throws Exception {
+        when(crypto.decryptWithCheckNoLog("bad")).thenThrow(mock(CheckException.class));
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (int i = 0; i < 100; i++) {
+            Map<String, Object> row = new HashMap<>();
+            row.put("id", i);
+            row.put("email", "bad");
+            rows.add(row);
+        }
+        processor.process(rows);
+        for (int i = 0; i < rows.size(); i++) {
+            assertEquals(i, rows.get(i).get("id"));
+            assertEquals("[#****]", rows.get(i).get("email"));
+        }
+        verify(crypto).decryptWithCheckNoLog("bad");
+        verifyZeroInteractions(redis);
+        doReturn("alice@example.com").when(crypto).decryptWithCheckNoLog("bad");
+        when(redis.setexBatch(anyMap(), eq(1800))).thenReturn(ResultUtil.SUCCESS_RESULT);
+        rows.get(0).put("email", "bad");
+        processor.process(rows.get(0));
+        assertTrue(((String) rows.get(0).get("email")).contains("#VIEW:"));
+        verify(crypto, times(2)).decryptWithCheckNoLog("bad");
+    }
+
+    @Test public void distinctAddressBookValuesNeedNoReadSideReEncryption() throws Exception {
+        processor = new SensitiveRevealProcessor(crypto, tokens);
+        when(crypto.decryptWithCheckNoLog(anyString())).thenAnswer(call ->
+                ((String) call.getArguments()[0]).substring("cipher:".length()));
+        when(redis.setexBatch(anyMap(), eq(1800))).thenReturn(ResultUtil.SUCCESS_RESULT);
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (int i = 0; i < 100; i++) {
+            Map<String, Object> row = new HashMap<>();
+            row.put("id", i);
+            row.put("email", "cipher:user" + i + "@example.com");
+            row.put("mobileNumber", "cipher:" + (13812345000L + i));
+            row.put("telNumber", "cipher:021-" + (12345000L + i));
+            rows.add(row);
+        }
+        processor.process(rows);
+        assertEquals(100, rows.size());
+        for (int i = 0; i < rows.size(); i++) {
+            assertEquals(i, rows.get(i).get("id"));
+            for (String key : Arrays.asList("email", "mobileNumber", "telNumber")) {
+                assertTrue(((String) rows.get(i).get(key)).contains("#VIEW:"));
+            }
+        }
+        verify(crypto, times(300)).decryptWithCheckNoLog(anyString());
+        verify(crypto, never()).encryptWithCheck(anyString());
+        ArgumentCaptor<Map> batches = ArgumentCaptor.forClass(Map.class);
+        verify(redis, times(15)).setexBatch(batches.capture(), eq(1800));
+        Set<Object> keys = new HashSet<>();
+        for (Map batch : batches.getAllValues()) {
+            assertEquals(20, batch.size());
+            keys.addAll(batch.keySet());
+            for (Object cipher : batch.values()) assertTrue(((String) cipher).startsWith("cipher:"));
+        }
+        assertEquals(300, keys.size());
+    }
+
+    @Test public void phoneShapedEmailLocalPartRemainsOneEmailFragment() throws Exception {
+        when(crypto.decryptWithCheckNoLog("email-cipher")).thenReturn("13812345678@example.com");
+        when(redis.setexBatch(anyMap(), eq(1800))).thenReturn(ResultUtil.SUCCESS_RESULT);
+        Map<String, Object> row = new HashMap<>();
+        row.put("email", "email-cipher");
+        processor.process(row);
+        assertTrue(((String) row.get("email")).startsWith("[#1***@example.com#VIEW:"));
+        verify(crypto, never()).encryptWithCheck(anyString());
+        ArgumentCaptor<Map> batch = ArgumentCaptor.forClass(Map.class);
+        verify(redis).setexBatch(batch.capture(), eq(1800));
+        assertEquals(Collections.singletonList("email-cipher"), new ArrayList<>(batch.getValue().values()));
     }
 
     private static class Plain {

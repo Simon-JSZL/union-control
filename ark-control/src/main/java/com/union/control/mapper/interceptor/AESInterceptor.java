@@ -142,21 +142,25 @@ public class AESInterceptor implements Interceptor {
 
         boolean encrypt = ENCRYPT.contains(statement.getId());
         if (!encrypt && !DECRYPT.contains(statement.getId())) return invocation.proceed();
-        if (!interceptorEnabled(statement.getId())) return invocation.proceed();
-        requireProcessor();
         if (encrypt) {
-            processor.encrypt(invocation.getArgs()[1]);
-            return invocation.proceed();
+            requireProcessor();
+            Runnable restore = processor.encryptForExecution(invocation.getArgs()[1]);
+            try {
+                return invocation.proceed();
+            } finally {
+                restore.run();
+            }
         }
+        requireProcessor();
         Object parameter = invocation.getArgs()[1];
         if (statement.isUseCache()) {
-            invocation.getArgs()[0] = copy(statement, parameter,
-                    statement.getBoundSql(parameter).getSql());
+            BoundSql source = statement.getBoundSql(parameter);
+            invocation.getArgs()[0] = copyBoundSql(statement, source, source.getSql());
         }
         try {
             Object result = invocation.proceed();
             if (result == null) return null;
-            if (getRevealEnabled() || checkIfStrictMode()) processor.process(result);
+            if (checkIfStrictMode() || (interceptorEnabled(statement.getId()) && getRevealEnabled())) processor.process(result);
             else processor.decrypt(result);
             return result;
         } finally {
@@ -198,7 +202,7 @@ public class AESInterceptor implements Interceptor {
         return roles;
     }
 
-    private boolean checkIfStrictMode(){
+    boolean checkIfStrictMode(){
         //use commonDDCache.getValueByType("UseStrictMode")
         String mockResult = "1";
         return mockResult.equals("1");
@@ -207,9 +211,10 @@ public class AESInterceptor implements Interceptor {
     private Object interceptAddressBook(Invocation invocation, MappedStatement statement)
             throws Throwable {
         requireAddressBook();
-        invocation.getArgs()[0] = addressBook.prepare(statement, invocation.getArgs()[1]);
-        if (statement.getSqlCommandType() != SqlCommandType.SELECT) return invocation.proceed();
+        Runnable restore = addressBook.encryptForExecution(statement, invocation.getArgs()[1]);
         try {
+            invocation.getArgs()[0] = addressBook.prepare(statement, invocation.getArgs()[1]);
+            if (statement.getSqlCommandType() != SqlCommandType.SELECT) return invocation.proceed();
             Object result = invocation.proceed();
             if (result != null) {
                 boolean revealEnabled = getRevealEnabled();
@@ -220,7 +225,10 @@ public class AESInterceptor implements Interceptor {
             }
             return result;
         } finally {
-            ((Executor) invocation.getTarget()).clearLocalCache();
+            restore.run();
+            if (statement.getSqlCommandType() == SqlCommandType.SELECT) {
+                ((Executor) invocation.getTarget()).clearLocalCache();
+            }
         }
     }
 
@@ -251,10 +259,13 @@ public class AESInterceptor implements Interceptor {
     }
 
     static MappedStatement copy(MappedStatement statement, Object parameter, String sql) {
-        BoundSql source = statement.getBoundSql(parameter);
+        return copyBoundSql(statement, statement.getBoundSql(parameter), sql);
+    }
+
+    static MappedStatement copyBoundSql(MappedStatement statement, BoundSql source, String sql) {
         if (sql.equals(source.getSql()) && !statement.isUseCache()) return statement;
         BoundSql boundSql = new BoundSql(statement.getConfiguration(), sql,
-                source.getParameterMappings(), parameter);
+                source.getParameterMappings(), source.getParameterObject());
         for (ParameterMapping mapping : source.getParameterMappings()) {
             String property = mapping.getProperty();
             if (source.hasAdditionalParameter(property)) {
@@ -272,6 +283,7 @@ public class AESInterceptor implements Interceptor {
         joined(statement.getResultSets(), builder::resultSets);
         builder.timeout(statement.getTimeout());
         builder.parameterMap(statement.getParameterMap());
+        // Includes MyBatis's inline ResultMap for XML resultType, with its original handlers.
         builder.resultMaps(statement.getResultMaps());
         builder.resultSetType(statement.getResultSetType());
         builder.cache(statement.getCache());

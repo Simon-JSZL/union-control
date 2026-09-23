@@ -19,6 +19,7 @@
         <java.version>1.8</java.version>
         <mysql.version>8.0.33</mysql.version>
         <sensitive.test.output>${project.build.directory}/test-classes</sensitive.test.output>
+        <sensitive.test.source>src/test/java</sensitive.test.source>
     </properties>
 
     <dependencies>
@@ -83,6 +84,7 @@
 
     <build>
         <testOutputDirectory>${sensitive.test.output}</testOutputDirectory>
+        <testSourceDirectory>${sensitive.test.source}</testSourceDirectory>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -106,6 +108,7 @@
             <id>sensitive-tests</id>
             <properties>
                 <sensitive.test.output>${project.build.directory}/sensitive-test-classes</sensitive.test.output>
+                <sensitive.test.source>import-test/sensitive</sensitive.test.source>
             </properties>
             <build>
                 <plugins>
@@ -113,7 +116,7 @@
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-compiler-plugin</artifactId>
                         <configuration>
-                            <testIncludes><testInclude>com/union/control/sensitive/**/*.java</testInclude></testIncludes>
+                            <testIncludes><testInclude>**/*.java</testInclude></testIncludes>
                             <testExcludes combine.self="override"/>
                         </configuration>
                     </plugin>

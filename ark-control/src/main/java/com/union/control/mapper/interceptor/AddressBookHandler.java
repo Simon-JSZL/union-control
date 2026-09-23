@@ -3,12 +3,10 @@ package com.union.control.mapper.interceptor;
 import com.nucc.channel.ark.common.exception.CheckException;
 import com.union.control.service.sensitive.SensitiveRevealProcessor;
 import org.apache.ibatis.mapping.MappedStatement;
+import org.apache.ibatis.mapping.BoundSql;
+import org.apache.ibatis.mapping.SqlCommandType;
 import org.springframework.stereotype.Component;
 
-import java.lang.reflect.Array;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
@@ -28,10 +26,16 @@ final class AddressBookHandler {
         this.revealProcessor = revealProcessor;
     }
 
-    MappedStatement prepare(MappedStatement statement, Object parameter) throws CheckException {
-        revealProcessor.encrypt(parameter);
-        return AESInterceptor.copy(statement, parameter,
-                OLD_ADDRESS_BOOK.matcher(statement.getBoundSql(parameter).getSql())
+    Runnable encryptForExecution(MappedStatement statement, Object parameter) throws CheckException {
+        return statement.getSqlCommandType() == SqlCommandType.SELECT
+                ? revealProcessor.encryptQueryParameters(parameter)
+                : revealProcessor.encryptForExecution(parameter);
+    }
+
+    MappedStatement prepare(MappedStatement statement, Object parameter) {
+        BoundSql source = statement.getBoundSql(parameter);
+        return AESInterceptor.copyBoundSql(statement, source,
+                OLD_ADDRESS_BOOK.matcher(source.getSql())
                         .replaceAll("t_m_announce_address_book_new"));
     }
 
@@ -46,27 +50,7 @@ final class AddressBookHandler {
             return;
         }
 
-        List<Object> plaintextRows = new ArrayList<>();
-        List<Object> protectedRows = new ArrayList<>();
-        for (Object row : rows(result)) {
-            if (allowPlaintext(row, plaintextRoles)) plaintextRows.add(row);
-            else protectedRows.add(row);
-        }
-        revealProcessor.decrypt(plaintextRows);
-        revealProcessor.process(protectedRows);
-    }
-
-    private static List<Object> rows(Object result) {
-        if (result == null) return Collections.emptyList();
-        List<Object> rows = new ArrayList<>();
-        if (result instanceof Iterable<?>) {
-            for (Object row : (Iterable<?>) result) rows.add(row);
-        } else if (result.getClass().isArray()) {
-            for (int i = 0; i < Array.getLength(result); i++) rows.add(Array.get(result, i));
-        } else {
-            rows.add(result);
-        }
-        return rows;
+        revealProcessor.process(result, row -> allowPlaintext(row, plaintextRoles));
     }
 
     private boolean allowPlaintext(Object row, Set<String> plaintextRoles) {
@@ -74,11 +58,16 @@ final class AddressBookHandler {
         try {
             Object value;
             if (row instanceof Map<?, ?>) {
-                value = ((Map<?, ?>) row).get("role");
+                Map<?, ?> values = (Map<?, ?>) row;
+                // Production uses docking_type; role is retained for the local demo contract.
+                String key = values.containsKey("dockingType") ? "dockingType"
+                        : values.containsKey("docking_type") ? "docking_type" : "role";
+                value = values.get(key);
             } else {
                 MetaObject metaObject = SystemMetaObject.forObject(row);
-                if (!metaObject.hasGetter("role")) return false;
-                value = metaObject.getValue("role");
+                String property = metaObject.hasGetter("dockingType") ? "dockingType" : "role";
+                if (!metaObject.hasGetter(property)) return false;
+                value = metaObject.getValue(property);
             }
             return value != null && plaintextRoles.contains(value.toString().trim());
         } catch (RuntimeException error) {

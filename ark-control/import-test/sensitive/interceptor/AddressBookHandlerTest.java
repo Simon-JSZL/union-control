@@ -43,11 +43,14 @@ public class AddressBookHandlerTest {
         String sql = "select * from t_m_announce_address_book join t_m_announce_address_book_new n join other_t_m_announce_address_book x";
         BoundSql bound = new BoundSql(config, sql, Collections.emptyList(), parameter);
         MappedStatement original = new MappedStatement.Builder(config, "query", p -> bound, SqlCommandType.SELECT).build();
+        Runnable restore = handler.encryptForExecution(original, parameter);
         MappedStatement prepared = handler.prepare(original, parameter);
         assertEquals(sql.replace("from t_m_announce_address_book ", "from t_m_announce_address_book_new "), prepared.getBoundSql(parameter).getSql());
         assertFalse(prepared.isUseCache());
         assertEquals("cipher", parameter.get("email"));
         verify(crypto).encryptWithCheck("alice@example.com");
+        restore.run();
+        assertEquals("alice@example.com", parameter.get("email"));
     }
 
     @Test public void assertStrictModeProtectsEntireResultEvenWhenRevealDisabled() throws Exception {
@@ -55,6 +58,19 @@ public class AddressBookHandlerTest {
         handler.processResult(result, false, true, Collections.singleton("001"));
         assertEquals("[#a***@example.com]", result.get("email"));
         verify(crypto).decryptWithCheckNoLog("cipher");
+    }
+
+    @Test public void prepareEvaluatesDynamicSqlOnlyOnce() {
+        Configuration config = new Configuration();
+        java.util.concurrent.atomic.AtomicInteger renders = new java.util.concurrent.atomic.AtomicInteger();
+        MappedStatement original = new MappedStatement.Builder(config, "query", parameter -> {
+            renders.incrementAndGet();
+            return new BoundSql(config, "select * from t_m_announce_address_book",
+                    Collections.emptyList(), parameter);
+        }, SqlCommandType.SELECT).build();
+        MappedStatement prepared = handler.prepare(original, null);
+        assertEquals("select * from t_m_announce_address_book_new", prepared.getBoundSql(null).getSql());
+        assertEquals(1, renders.get());
     }
 
     @Test public void assertDisabledRevealDecryptsEntireResult() throws Exception {
@@ -80,6 +96,10 @@ public class AddressBookHandlerTest {
         assertEquals("[#a***@example.com]", noRole.get("email"));
         assertEquals("[#a***@example.com]", broken.email);
         assertEquals("[#a***@example.com]", noGetter.email);
+        assertEquals(7, rows.size());
+        assertSame(allowed, rows.get(0));
+        assertSame(denied, rows.get(1));
+        verify(crypto).decryptWithCheckNoLog("cipher");
     }
 
     @Test public void assertArraysAndSingleRowsAndNullAreHandled() throws Exception {
@@ -93,6 +113,27 @@ public class AddressBookHandlerTest {
     }
 
     public static class NoRoleBean { @EnDecryptField String email = "cipher"; }
+
+    @Test public void productionDockingTypeIsAuthoritativeForPlaintextAndStrictMode() throws Exception {
+        for (String key : Arrays.asList("dockingType", "docking_type")) {
+            Map<String, Object> allowed = row("D4");
+            allowed.put(key, " D3 ");
+            Map<String, Object> denied = row("D3");
+            denied.put(key, "D4");
+            Map<String, Object> missing = row("D3");
+            missing.put(key, null);
+            List<Object> rows = Arrays.asList(allowed, denied, missing);
+            handler.processResult(rows, true, false, Collections.singleton("D3"));
+            assertEquals(3, rows.size());
+            assertEquals("alice@example.com", allowed.get("email"));
+            assertEquals("[#a***@example.com]", denied.get("email"));
+            assertEquals("[#a***@example.com]", missing.get("email"));
+            allowed.put("email", "cipher");
+            handler.processResult(allowed, true, true, Collections.singleton("D3"));
+            assertEquals("[#a***@example.com]", allowed.get("email"));
+        }
+    }
+
     public static class RoleBean extends NoRoleBean { public String getRole() { return "001"; } }
     public static class BrokenRoleBean extends NoRoleBean { public String getRole() { throw new IllegalStateException("bad row"); } }
 }

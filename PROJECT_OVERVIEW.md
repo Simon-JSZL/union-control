@@ -144,6 +144,33 @@ Selected business changes are integrated into the existing production projects.
   dependency compatibility. Host-specific dependency overrides take precedence
   over a Boot version alone.
 
+### Sensitive write integrity baseline
+
+Confirmed by the project owner on 2026-09-22: display availability must yield to
+write integrity. Masking/reveal failures may return an error; configured plaintext
+display is allowed when Redis or reveal tokens are unavailable. No display switch,
+Redis failure, expired token, crypto error, batch shape, or retry may cause a
+masked display value or an unencrypted sensitive value to be stored.
+
+- Known sensitive writes always restore valid reveal markers and execute their
+  original annotation/key-specific encryption. `interceptorItems`, reveal mode,
+  strict mode, and plaintext roles must never bypass write encryption.
+- Known sensitive reads must still decode stored ciphertext when display masking
+  is disabled, so editing cannot submit raw database ciphertext for encryption again.
+- Recognize actual mask formats, not arbitrary `[#`, `#VIEW:`, or `****` text.
+  Recognizable unresolved/malformed masks, invalid tokens, failed restoration,
+  invalid field types, and invalid encryption results must abort before SQL.
+- Support actual MyBatis wrappers and aliases, stage all field conversions before
+  mutating parameters, and restore caller inputs after JDBC binding on success or
+  failure. Preserve generated keys and ordinary fields; never double-encrypt retries.
+- Preserve the existing storage codecs and production AddressBook manual encryption
+  boundary. Do not add its production writes to the query-migration interceptor.
+- Production acceptance requires matching the actual mapper statement IDs, parameter
+  shapes, dependency versions, interceptor registration, and crypto contract. A local
+  regression suite is evidence for the tested paths, not proof for absent host code.
+
+See `docs/sensitive-write-baseline.md` for the audit and validation scope.
+
 ### Cross-service timeout review
 
 Inspect `/Users/simon/code/union-py-app` before assessing Agent timeout coverage.
@@ -242,9 +269,13 @@ The local sensitive-data implementation mirrors the restored production
 `AESInterceptor` and `SymmetricalSecurityUtils` contracts. Sensitive statements
 route through general encryption, general decryption, or the AddressBook table
 migration branch. The global reveal mode replaces sensitive plaintext fragments
-with masks and short-lived Redis tokens. AddressBook result rows whose returned
-`role` value is explicitly configured may remain plaintext; missing, unknown, or
-invalid roles stay masked. The authenticated reveal API decrypts only the token's
+with masks and short-lived Redis tokens. As clarified by the project owner on
+2026-09-23, production AddressBook plaintext eligibility uses the returned
+`docking_type` (`dockingType` on the DTO), not the caller's login role. The local
+demo retains its `role` field when no production docking-type field is present.
+An explicitly configured value may remain plaintext; missing, unknown, or invalid
+values stay masked. A present but null docking-type field must not fall back to
+`role`. The authenticated reveal API decrypts only the token's
 fragment. The local simulation supplies a non-cryptographic `sensitiveProxy`
 under the default or explicit `local-sensitive-mock` profile. This substitute
 is excluded from production, which retains its existing real proxy.

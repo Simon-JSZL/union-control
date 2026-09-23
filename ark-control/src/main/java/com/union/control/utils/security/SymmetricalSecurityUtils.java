@@ -28,9 +28,8 @@ import static com.nucc.channel.ark.common.util.Constant.REGEX_TELEPHONE;
 @Component
 public class SymmetricalSecurityUtils {
     private static final Logger LOG = LoggerFactory.getLogger(SymmetricalSecurityUtils.class);
-    private static final Pattern MOBILE = Pattern.compile(REGEX_MOBILE);
-    private static final Pattern EMAIL = Pattern.compile(REGEX_EMAIL);
-    private static final Pattern TELEPHONE = Pattern.compile(REGEX_TELEPHONE);
+    private static final Pattern SENSITIVE = Pattern.compile(
+            "(" + REGEX_EMAIL + ")|(" + REGEX_MOBILE + ")|(" + REGEX_TELEPHONE + ")");
     private static final Pattern DECRYPT_TAG = Pattern.compile(REGEX_DECRYPT_TAG);
 
     @Resource(name = "sensitiveProxy")
@@ -43,19 +42,22 @@ public class SymmetricalSecurityUtils {
     }
 
     public String encryptLongString(String plaintext, int chunkSize) throws CheckException {
+        if (chunkSize < 0) throw new IllegalArgumentException("Negative sensitive chunk size");
         if (chunkSize == 0) return encryptByFixKey(plaintext);
         List<String> chunks = new ArrayList<>();
-        for (int i = 0; i < plaintext.length(); i += chunkSize) {
-            chunks.add(encryptByFixKey(plaintext.substring(i, Math.min(plaintext.length(), i + chunkSize))));
+        for (int i = 0; i < plaintext.length();) {
+            int end = i + Math.min(chunkSize, plaintext.length() - i);
+            if (end < plaintext.length() && Character.isHighSurrogate(plaintext.charAt(end - 1))
+                    && Character.isLowSurrogate(plaintext.charAt(end))) end++;
+            chunks.add(encryptByFixKey(plaintext.substring(i, end)));
+            i = end;
         }
         return join(chunks, "|");
     }
 
     public String encryptWithTag(String plaintext) throws CheckException {
         if (isBlank(plaintext)) return "";
-        String value = replaceEncrypted(MOBILE, plaintext);
-        value = replaceEncrypted(EMAIL, value);
-        return replaceEncrypted(TELEPHONE, value);
+        return replaceEncrypted(SENSITIVE, plaintext);
     }
 
     public String decryptLongString(String ciphertext) throws CheckException {
@@ -95,13 +97,13 @@ public class SymmetricalSecurityUtils {
     }
 
     private String replaceEncrypted(Pattern pattern, String plaintext) throws CheckException {
-        StringBuilder value = new StringBuilder(plaintext);
-        Matcher matcher = pattern.matcher(value);
+        StringBuffer value = new StringBuffer();
+        Matcher matcher = pattern.matcher(plaintext);
         while (matcher.find()) {
-            value.replace(matcher.start(), matcher.end(),
-                    ENCRYPT_START + encryptByFixKey(matcher.group()) + ENCRYPT_END);
-            matcher.reset(value);
+            matcher.appendReplacement(value, Matcher.quoteReplacement(
+                    ENCRYPT_START + encryptByFixKey(matcher.group()) + ENCRYPT_END));
         }
+        matcher.appendTail(value);
         return value.toString();
     }
 
@@ -110,6 +112,10 @@ public class SymmetricalSecurityUtils {
         Result<SecurityResult> result = symmetricalSecurityService.encryptByFixedKey(
                 SymmetricalSecurityService.Algorithm.AES256,
                 plaintext.getBytes(StandardCharsets.UTF_8));
+        if (result == null || (result.isSuccess() && (result.getResult() == null
+                || result.getResult().getContent() == null || result.getResult().getContent().length == 0))) {
+            throw new CheckException(BaseDataErrorCode.SYSTEM_INNER_ERROR, "Invalid encryption result");
+        }
         if (!result.isSuccess()) throw remoteFailure(result);
         debug("encryptByFixKey", started);
         return Base64.encodeBase64String(result.getResult().getContent());

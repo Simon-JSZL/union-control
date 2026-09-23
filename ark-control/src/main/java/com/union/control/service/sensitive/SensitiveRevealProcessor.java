@@ -9,6 +9,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+import org.apache.ibatis.binding.MapperMethod;
 
 import java.lang.reflect.Array;
 import java.lang.reflect.Field;
@@ -19,11 +20,13 @@ import java.util.Arrays;
 import java.util.Base64;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -36,7 +39,14 @@ import static com.nucc.channel.ark.common.util.Constant.REGEX_TELEPHONE;
 public final class SensitiveRevealProcessor {
     private static final Logger LOG = LoggerFactory.getLogger(SensitiveRevealProcessor.class);
     private static final Pattern SENSITIVE = Pattern.compile(
-            "(" + REGEX_MOBILE + ")|(" + REGEX_EMAIL + ")|(" + REGEX_TELEPHONE + ")");
+            "(" + REGEX_EMAIL + ")|(" + REGEX_MOBILE + ")|(" + REGEX_TELEPHONE + ")");
+    // Match only the display shapes produced by mask(), not arbitrary marker prefixes.
+    private static final String MASK_FORMAT =
+            "(?:[0-9]{3}\\*{4}[0-9]{4}|[a-zA-Z0-9._%+-]\\*{3}@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}|\\*{4})";
+    private static final Pattern MARKER = Pattern.compile(
+            "\\[#(" + MASK_FORMAT + ")#VIEW:(rt_[A-Za-z0-9_-]{43})\\]");
+    private static final Pattern UNRESOLVED_MARKER = Pattern.compile(
+            "\\[#" + MASK_FORMAT + "(?=[\\]#\\r\\n]|$)");
     private static final Set<String> MAP_KEYS = new HashSet<>(Arrays.asList(
             "mobileNumber", "phoneNumber", "telNumber", "email"));
 
@@ -50,11 +60,115 @@ public final class SensitiveRevealProcessor {
     }
 
     public void encrypt(Object value) throws CheckException {
-        transform(value, true, null, visited());
+        encryptForExecution(value);
+    }
+
+    /** Apply only after every value is ready; the executor restores caller inputs after binding. */
+    public Runnable encryptForExecution(Object value) throws CheckException {
+        if (value != null && isSimple(value.getClass())) {
+            throw new IllegalArgumentException("Sensitive SQL requires named parameters or an annotated row");
+        }
+        return encryptQueryParameters(value);
+    }
+
+    /** AddressBook queries may also receive a scalar ID, which is not a sensitive field. */
+    public Runnable encryptQueryParameters(Object value) throws CheckException {
+        List<WriteChange> changes = new ArrayList<>();
+        collectWrites(value, changes, visited());
+        int applied = 0;
+        try {
+            for (WriteChange change : changes) {
+                change.target.set(change.ciphertext);
+                applied++;
+            }
+        } catch (RuntimeException error) {
+            try { restoreWrites(changes, applied); }
+            catch (RuntimeException restoreError) { error.addSuppressed(restoreError); }
+            throw error;
+        }
+        return () -> restoreWrites(changes, changes.size());
+    }
+
+    private static void restoreWrites(List<WriteChange> changes, int count) {
+        RuntimeException failure = null;
+        for (int i = count - 1; i >= 0; i--) {
+            try { changes.get(i).restore(); }
+            catch (RuntimeException error) {
+                if (failure == null) failure = error;
+                else failure.addSuppressed(error);
+            }
+        }
+        if (failure != null) throw failure;
+    }
+
+    private void collectWrites(Object value, List<WriteChange> changes, Set<Object> visited)
+            throws CheckException {
+        if (value == null || isSimple(value.getClass()) || !visited.add(value)) return;
+        if (value instanceof Iterable<?>) {
+            for (Object child : (Iterable<?>) value) collectWrites(child, changes, visited);
+        } else if (value.getClass().isArray()) {
+            for (int i = 0; i < Array.getLength(value); i++) {
+                collectWrites(Array.get(value, i), changes, visited);
+            }
+        } else if (value instanceof Map<?, ?>) {
+            Map map = (Map) value;
+            IdentityHashMap<Object, String> replacements = new IdentityHashMap<>();
+            for (Object item : map.entrySet()) {
+                Map.Entry entry = (Map.Entry) item;
+                Object key = entry.getKey();
+                Object child = entry.getValue();
+                if (MAP_KEYS.contains(key) && child != null) {
+                    if (!(child instanceof String)) throw invalidWrite();
+                    String plaintext = restoreForWrite((String) child);
+                    String ciphertext = checkedCipher(plaintext, crypto.encryptWithCheck(plaintext), false);
+                    replacements.put(child, ciphertext);
+                    changes.add(new WriteChange(new ValueTarget((String) child,
+                            replacement -> map.put(key, replacement)), ciphertext));
+                } else {
+                    collectWrites(child, changes, visited);
+                }
+            }
+            // Only MyBatis's generic aliases represent the same SQL argument.
+            if (map instanceof MapperMethod.ParamMap<?>) {
+                for (Object item : map.entrySet()) {
+                    Map.Entry entry = (Map.Entry) item;
+                    Object key = entry.getKey();
+                    Object child = entry.getValue();
+                    if (replacements.containsKey(child) && !MAP_KEYS.contains(key)) {
+                        if (!(key instanceof String) || !((String) key).matches("param[1-9][0-9]*")) {
+                            throw new IllegalArgumentException("Ambiguous sensitive MyBatis parameter alias");
+                        }
+                        changes.add(new WriteChange(new ValueTarget((String) child,
+                                replacement -> map.put(key, replacement)), replacements.get(child)));
+                    }
+                }
+            }
+        } else {
+            for (Class<?> type = value.getClass(); type != null && type != Object.class;
+                 type = type.getSuperclass()) {
+                for (Field field : type.getDeclaredFields()) {
+                    if (!isSensitive(field)) continue;
+                    validateField(field);
+                    String original = readField(value, field);
+                    changes.add(new WriteChange(new ValueTarget(original,
+                            replacement -> writeField(value, field, replacement)),
+                            transformFieldValue(field, original, true)));
+                }
+            }
+        }
+    }
+
+    private static String checkedCipher(String plaintext, String ciphertext, boolean tagged) {
+        if (plaintext != null && !plaintext.trim().isEmpty()
+                && (ciphertext == null || ciphertext.isEmpty()
+                || (plaintext.equals(ciphertext) && (!tagged || SENSITIVE.matcher(plaintext).find())))) {
+            throw new IllegalStateException("Sensitive encryption returned an invalid result");
+        }
+        return ciphertext;
     }
 
     public void decrypt(Object value) throws CheckException {
-        transform(value, false, null, visited());
+        transform(value, null, visited(), new ReadContext(), row -> true);
     }
 
     SensitiveRevealProcessor(SymmetricalSecurityUtils crypto, RedisRevealTokenStore tokens,
@@ -65,19 +179,25 @@ public final class SensitiveRevealProcessor {
     }
 
     public void process(Object result) {
-        List<ValueTarget> targets = new ArrayList<>();
-        try {
-            transform(result, false, targets, visited());
-        } catch (CheckException impossible) {
-            throw new IllegalStateException(impossible);
-        }
-        apply(targets);
+        process(result, row -> false);
     }
 
-    private void apply(List<ValueTarget> targets) {
+    /** One read context for the entire result, including rows allowed to display plaintext. */
+    public void process(Object result, Predicate<Object> plaintextRows) {
+        List<ValueTarget> targets = new ArrayList<>();
+        ReadContext reads = new ReadContext();
+        try {
+            transform(result, targets, visited(), reads, plaintextRows);
+        } catch (CheckException error) {
+            throw new IllegalStateException("Sensitive plaintext row decryption failed", error);
+        }
+        apply(targets, reads);
+    }
+
+    private void apply(List<ValueTarget> targets, ReadContext reads) {
         List<RedisRevealTokenStore.Entry> entries = new ArrayList<>();
         List<Plan> plans = new ArrayList<>(targets.size());
-        for (ValueTarget target : targets) plans.add(plan(target, entries));
+        for (ValueTarget target : targets) plans.add(plan(target, entries, reads));
 
         boolean clickable = entries.isEmpty();
         if (!entries.isEmpty()) {
@@ -91,7 +211,7 @@ public final class SensitiveRevealProcessor {
         for (Plan plan : plans) plan.target.set(clickable ? plan.clickable : plan.masked);
     }
 
-    private Plan plan(ValueTarget target, List<RedisRevealTokenStore.Entry> entries) {
+    private Plan plan(ValueTarget target, List<RedisRevealTokenStore.Entry> entries, ReadContext reads) {
         if (target.value == null || target.value.isEmpty()) return new Plan(target, target.value, target.value);
         Matcher matcher = SENSITIVE.matcher(target.value);
         StringBuilder masked = new StringBuilder();
@@ -103,19 +223,7 @@ public final class SensitiveRevealProcessor {
             String plaintext = matcher.group();
             String mask = mask(plaintext);
             masked.append("[#").append(mask).append(']');
-            String revealToken = null;
-            try {
-                String token = token();
-                entries.add(new RedisRevealTokenStore.Entry(
-                        token, crypto.encryptWithCheck(plaintext)));
-                revealToken = token;
-            } catch (CheckException error) {
-                LOG.warn("Sensitive reveal fragment encryption failed error_type={}",
-                        error.getClass().getSimpleName());
-            }
-            clickable.append("[#").append(mask);
-            if (revealToken != null) clickable.append("#VIEW:").append(revealToken);
-            clickable.append(']');
+            clickable.append(reads.marker(plaintext, entries));
             end = matcher.end();
         }
         if (end == 0) return new Plan(target, target.value, target.value);
@@ -125,72 +233,58 @@ public final class SensitiveRevealProcessor {
     }
 
     private void addMapValue(final Map map, final Object key, String ciphertext,
-                             List<ValueTarget> targets) {
+                             List<ValueTarget> targets, ReadContext reads) {
         try {
-            targets.add(new ValueTarget(crypto.decryptWithCheckNoLog(ciphertext),
+            targets.add(new ValueTarget(reads.decrypt(null, ciphertext),
                     value -> map.put(key, value)));
-        } catch (CheckException error) {
-            map.put(key, "****");
-            LOG.warn("Sensitive reveal field decryption failed field_kind=map error_type={}",
-                    error.getClass().getSimpleName());
+        } catch (CheckException | RuntimeException error) {
+            map.put(key, "[#****]");
         }
     }
 
-    private void addFieldValue(final Object owner, final Field field, List<ValueTarget> targets) {
+    private void addFieldValue(final Object owner, final Field field, List<ValueTarget> targets, ReadContext reads) {
         validateField(field);
         try {
             String ciphertext = readField(owner, field);
-            final String plaintext = transformFieldValue(field, ciphertext, false);
+            final String plaintext = reads.decrypt(field, ciphertext);
             targets.add(new ValueTarget(plaintext, value -> writeField(owner, field, value)));
         } catch (CheckException | RuntimeException error) {
-            writeField(owner, field, "****");
-            LOG.warn("Sensitive reveal field decryption failed field_kind=pojo error_type={}",
-                    error.getClass().getSimpleName());
+            writeField(owner, field, "[#****]");
         }
     }
 
-    private void transform(Object value, boolean encrypt, List<ValueTarget> revealTargets,
-                           Set<Object> visited) throws CheckException {
+    private void transform(Object value, List<ValueTarget> revealTargets, Set<Object> visited,
+                           ReadContext reads, Predicate<Object> plaintextRows) throws CheckException {
         if (value == null) return;
         // ponytail: business inputs are a single row or one container of rows; no nested traversal.
         if (value instanceof Iterable<?>) {
             for (Object row : (Iterable<?>) value) {
-                transformRow(row, encrypt, revealTargets, visited);
+                transformRow(row, revealTargets, visited, reads, plaintextRows);
             }
         } else if (value.getClass().isArray()) {
             for (int i = 0; i < Array.getLength(value); i++) {
-                transformRow(Array.get(value, i), encrypt, revealTargets, visited);
+                transformRow(Array.get(value, i), revealTargets, visited, reads, plaintextRows);
             }
         } else {
-            transformRow(value, encrypt, revealTargets, visited);
+            transformRow(value, revealTargets, visited, reads, plaintextRows);
         }
     }
 
-    private void transformRow(Object value, boolean encrypt, List<ValueTarget> revealTargets,
-                              Set<Object> visited) throws CheckException {
+    private void transformRow(Object value, List<ValueTarget> revealTargets, Set<Object> visited,
+                              ReadContext reads, Predicate<Object> plaintextRows) throws CheckException {
         if (value == null || isSimple(value.getClass()) || !visited.add(value)) return;
+        if (plaintextRows.test(value)) revealTargets = null;
         if (value instanceof Map<?, ?>) {
             Map map = (Map) value;
-            IdentityHashMap<Object, Object> replacements = revealTargets == null
-                    ? new IdentityHashMap<>() : null;
             for (Object item : map.entrySet()) {
                 Map.Entry entry = (Map.Entry) item;
                 Object child = entry.getValue();
-                if (entry.getKey() instanceof String && MAP_KEYS.contains(entry.getKey())
-                        && child instanceof String) {
+                if (MAP_KEYS.contains(entry.getKey()) && child instanceof String) {
                     if (revealTargets == null) {
-                        replacements.put(child, encrypt ? crypto.encryptWithCheck((String) child)
-                                : crypto.decryptWithCheckNoLog((String) child));
+                        entry.setValue(reads.decrypt(null, (String) child));
                     } else {
-                        addMapValue(map, entry.getKey(), (String) child, revealTargets);
+                        addMapValue(map, entry.getKey(), (String) child, revealTargets, reads);
                     }
-                }
-            }
-            for (Object item : map.entrySet()) {
-                Map.Entry entry = (Map.Entry) item;
-                Object child = entry.getValue();
-                if (replacements != null && replacements.containsKey(child)) {
-                    entry.setValue(replacements.get(child));
                 }
             }
             return;
@@ -200,15 +294,11 @@ public final class SensitiveRevealProcessor {
              type = type.getSuperclass()) {
             for (Field field : type.getDeclaredFields()) {
                 if (!isSensitive(field)) continue;
-                if (revealTargets == null) transformField(value, field, encrypt);
-                else addFieldValue(value, field, revealTargets);
+                validateField(field);
+                if (revealTargets == null) writeField(value, field, reads.decrypt(field, readField(value, field)));
+                else addFieldValue(value, field, revealTargets, reads);
             }
         }
-    }
-
-    private void transformField(Object owner, Field field, boolean encrypt) throws CheckException {
-        validateField(field);
-        writeField(owner, field, transformFieldValue(field, readField(owner, field), encrypt));
     }
 
     private static void validateField(Field field) {
@@ -240,15 +330,45 @@ public final class SensitiveRevealProcessor {
     private String transformFieldValue(Field field, String value, boolean encrypt)
             throws CheckException {
         if (value == null) return null;
+        if (encrypt) value = restoreForWrite(value);
         if (field.isAnnotationPresent(EnDecryptField.class)) {
-            return encrypt ? crypto.encryptWithCheck(value) : crypto.decryptWithCheckNoLog(value);
+            return encrypt ? checkedCipher(value, crypto.encryptWithCheck(value), false)
+                    : crypto.decryptWithCheckNoLog(value);
         }
         if (field.isAnnotationPresent(EnDecryptFieldWithTag.class)) {
-            return encrypt ? crypto.encryptWithTag(value) : crypto.decryptWithTag(value);
+            return encrypt ? checkedCipher(value, crypto.encryptWithTag(value), true) : crypto.decryptWithTag(value);
         }
         EnDecryptFieldLong longField = field.getAnnotation(EnDecryptFieldLong.class);
-        return encrypt ? crypto.encryptLongString(value, longField.chunkSize())
+        return encrypt ? checkedCipher(value, crypto.encryptLongString(value, longField.chunkSize()), false)
                 : crypto.decryptLongString(value);
+    }
+
+    /** Resolve display markers before any storage codec; never persist a failed reveal. */
+    private String restoreForWrite(String value) {
+        Matcher matcher = MARKER.matcher(value);
+        StringBuffer restored = new StringBuffer();
+        while (matcher.find()) {
+            final String plaintext;
+            try {
+                String ciphertext = tokens.get(matcher.group(2));
+                if (ciphertext == null || ciphertext.isEmpty()) throw invalidWrite();
+                plaintext = crypto.decryptWithCheckNoLog(ciphertext);
+                if (plaintext == null || !SENSITIVE.matcher(plaintext).matches()
+                        || !mask(plaintext).equals(matcher.group(1))) throw invalidWrite();
+            } catch (CheckException | RuntimeException error) {
+                // Do not expose the token, ciphertext, plaintext, or provider error.
+                throw invalidWrite();
+            }
+            matcher.appendReplacement(restored, Matcher.quoteReplacement(plaintext));
+        }
+        matcher.appendTail(restored);
+        String plaintext = restored.toString();
+        if (UNRESOLVED_MARKER.matcher(plaintext).find()) throw invalidWrite();
+        return plaintext;
+    }
+
+    private static IllegalArgumentException invalidWrite() {
+        return new IllegalArgumentException("敏感字段脱敏标记无效、已过期或还原失败，请刷新后重新编辑");
     }
 
     private static boolean isSensitive(Field field) {
@@ -288,6 +408,61 @@ public final class SensitiveRevealProcessor {
         return "****";
     }
 
+    /** Request-local only: never retain plaintext, tokens or failures between queries. */
+    private final class ReadContext {
+        final Map<String, String> plaintexts = new HashMap<>();
+        final Map<String, Exception> failures = new HashMap<>();
+        final Map<String, String> fragmentCiphertexts = new HashMap<>();
+        final Map<String, String> markers = new HashMap<>();
+
+        String decrypt(Field field, String ciphertext) throws CheckException {
+            if (ciphertext == null) return null;
+            String codec = field == null || field.isAnnotationPresent(EnDecryptField.class) ? "normal"
+                    : field.isAnnotationPresent(EnDecryptFieldWithTag.class) ? "tagged" : "long";
+            String key = codec + ":" + ciphertext;
+            Exception failure = failures.get(key);
+            if (failure instanceof CheckException) throw (CheckException) failure;
+            if (failure != null) throw (RuntimeException) failure;
+            if (plaintexts.containsKey(key)) return plaintexts.get(key);
+            try {
+                String plaintext = field == null ? crypto.decryptWithCheckNoLog(ciphertext)
+                        : transformFieldValue(field, ciphertext, false);
+                plaintexts.put(key, plaintext);
+                // Only a complete normal field has exactly the reveal endpoint's storage codec.
+                // Tagged text and chunked ciphertext must never be stored as a fragment token.
+                if ("normal".equals(codec) && plaintext != null && SENSITIVE.matcher(plaintext).matches()) {
+                    fragmentCiphertexts.putIfAbsent(plaintext, ciphertext);
+                }
+                return plaintext;
+            } catch (CheckException | RuntimeException error) {
+                failures.put(key, error);
+                LOG.warn("Sensitive field decryption failed codec={} error_type={}", codec,
+                        error.getClass().getSimpleName());
+                throw error;
+            }
+        }
+
+        String marker(String plaintext, List<RedisRevealTokenStore.Entry> entries) {
+            if (markers.containsKey(plaintext)) return markers.get(plaintext);
+            String masked = "[#" + mask(plaintext) + "]";
+            String marker = masked;
+            try {
+                String ciphertext = fragmentCiphertexts.get(plaintext);
+                if (ciphertext == null) {
+                    ciphertext = checkedCipher(plaintext, crypto.encryptWithCheck(plaintext), false);
+                }
+                String token = token();
+                entries.add(new RedisRevealTokenStore.Entry(token, ciphertext));
+                marker = "[#" + mask(plaintext) + "#VIEW:" + token + "]";
+            } catch (CheckException | RuntimeException error) {
+                LOG.warn("Sensitive reveal fragment encryption failed error_type={}",
+                        error.getClass().getSimpleName());
+            }
+            markers.put(plaintext, marker);
+            return marker;
+        }
+    }
+
     private static final class ValueTarget {
         final String value;
         final Consumer<String> setter;
@@ -300,6 +475,18 @@ public final class SensitiveRevealProcessor {
         void set(String value) {
             setter.accept(value);
         }
+    }
+
+    private static final class WriteChange {
+        final ValueTarget target;
+        final String ciphertext;
+
+        WriteChange(ValueTarget target, String ciphertext) {
+            this.target = target;
+            this.ciphertext = ciphertext;
+        }
+
+        void restore() { target.set(target.value); }
     }
 
     private static final class Plan {
