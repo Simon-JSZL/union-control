@@ -41,12 +41,12 @@ public final class SensitiveRevealProcessor {
     private static final Pattern SENSITIVE = Pattern.compile(
             "(" + REGEX_EMAIL + ")|(" + REGEX_MOBILE + ")|(" + REGEX_TELEPHONE + ")");
     // Match only the display shapes produced by mask(), not arbitrary marker prefixes.
-    private static final String MASK_FORMAT =
-            "(?:[0-9]{3}\\*{4}[0-9]{4}|[a-zA-Z0-9._%+-]\\*{3}@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}|\\*{4})";
+    private static final Pattern MASK_FORMAT = Pattern.compile(
+            "(?:[0-9]{3}\\*{4}[0-9]{4}|[a-zA-Z0-9._%+-]\\*{3}@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}|\\*{4})");
     private static final Pattern MARKER = Pattern.compile(
-            "\\[#(" + MASK_FORMAT + ")#VIEW:(rt_[A-Za-z0-9_-]{43})\\]");
+            "\\[#([^#\\[\\]\\r\\n]*)#VIEW:(rt_[A-Za-z0-9_-]{43})\\]");
     private static final Pattern UNRESOLVED_MARKER = Pattern.compile(
-            "\\[#" + MASK_FORMAT + "(?=[\\]#\\r\\n]|$)");
+            "\\[#([^#\\[\\]\\r\\n]*)(?=[\\]#\\r\\n]|$)");
     private static final Set<String> MAP_KEYS = new HashSet<>(Arrays.asList(
             "mobileNumber", "phoneNumber", "telNumber", "email"));
 
@@ -74,7 +74,17 @@ public final class SensitiveRevealProcessor {
     /** AddressBook queries may also receive a scalar ID, which is not a sensitive field. */
     public Runnable encryptQueryParameters(Object value) throws CheckException {
         List<WriteChange> changes = new ArrayList<>();
-        collectWrites(value, changes, visited());
+        Set<Object> seen = visited();
+        // Unwrap MyBatis arguments once; ordinary Maps are rows, not object graphs.
+        if (value instanceof MapperMethod.ParamMap<?>
+                || value instanceof org.apache.ibatis.session.defaults.DefaultSqlSession.StrictMap<?>) {
+            collectRowWrites(value, changes, seen);
+            for (Object argument : ((Map<?, ?>) value).values()) {
+                collectWrites(argument, changes, seen);
+            }
+        } else {
+            collectWrites(value, changes, seen);
+        }
         int applied = 0;
         try {
             for (WriteChange change : changes) {
@@ -103,14 +113,22 @@ public final class SensitiveRevealProcessor {
 
     private void collectWrites(Object value, List<WriteChange> changes, Set<Object> visited)
             throws CheckException {
-        if (value == null || isSimple(value.getClass()) || !visited.add(value)) return;
+        if (value == null) return;
         if (value instanceof Iterable<?>) {
-            for (Object child : (Iterable<?>) value) collectWrites(child, changes, visited);
+            for (Object row : (Iterable<?>) value) collectRowWrites(row, changes, visited);
         } else if (value.getClass().isArray()) {
             for (int i = 0; i < Array.getLength(value); i++) {
-                collectWrites(Array.get(value, i), changes, visited);
+                collectRowWrites(Array.get(value, i), changes, visited);
             }
-        } else if (value instanceof Map<?, ?>) {
+        } else {
+            collectRowWrites(value, changes, visited);
+        }
+    }
+
+    private void collectRowWrites(Object value, List<WriteChange> changes, Set<Object> visited)
+            throws CheckException {
+        if (value == null || isSimple(value.getClass()) || !visited.add(value)) return;
+        if (value instanceof Map<?, ?>) {
             Map map = (Map) value;
             IdentityHashMap<Object, String> replacements = new IdentityHashMap<>();
             for (Object item : map.entrySet()) {
@@ -124,8 +142,6 @@ public final class SensitiveRevealProcessor {
                     replacements.put(child, ciphertext);
                     changes.add(new WriteChange(new ValueTarget((String) child,
                             replacement -> map.put(key, replacement)), ciphertext));
-                } else {
-                    collectWrites(child, changes, visited);
                 }
             }
             // Only MyBatis's generic aliases represent the same SQL argument.
@@ -348,6 +364,7 @@ public final class SensitiveRevealProcessor {
         Matcher matcher = MARKER.matcher(value);
         StringBuffer restored = new StringBuffer();
         while (matcher.find()) {
+            if (!MASK_FORMAT.matcher(matcher.group(1)).matches()) continue;
             final String plaintext;
             try {
                 String ciphertext = tokens.get(matcher.group(2));
@@ -363,7 +380,10 @@ public final class SensitiveRevealProcessor {
         }
         matcher.appendTail(restored);
         String plaintext = restored.toString();
-        if (UNRESOLVED_MARKER.matcher(plaintext).find()) throw invalidWrite();
+        Matcher unresolved = UNRESOLVED_MARKER.matcher(plaintext);
+        while (unresolved.find()) {
+            if (MASK_FORMAT.matcher(unresolved.group(1)).matches()) throw invalidWrite();
+        }
         return plaintext;
     }
 

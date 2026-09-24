@@ -92,15 +92,78 @@ public class SensitiveRevealProcessorTest {
     }
 
     @Test
-    public void assertEncryptsNestedMapValues() throws Exception {
+    public void assertTreatsOrdinaryMapAsSingleRowWithoutNestedTraversal() throws Exception {
         Map<String, Object> nested = new HashMap<>();
         nested.put("email", "cipher");
         Map<String, Object> row = new HashMap<>();
         row.put("details", nested);
         when(crypto.encryptWithCheck("cipher")).thenReturn("encrypted");
         processor.encrypt(Collections.singletonList(row));
-        assertEquals("encrypted", nested.get("email"));
+        assertEquals("cipher", nested.get("email"));
         verifyZeroInteractions(redis);
+    }
+
+    @Test
+    public void assertAllSupportedShapesEncryptDecryptAndRestore() throws Exception {
+        when(crypto.encryptWithCheck("plain")).thenReturn("cipher");
+        when(crypto.decryptWithCheckNoLog("cipher")).thenReturn("plain");
+        for (int shape = 0; shape < 6; shape++) {
+            Plain entity = new Plain();
+            entity.plain = "plain";
+            Map<String, Object> map = new LinkedHashMap<>();
+            map.put("email", "plain");
+            Object input;
+            switch (shape) {
+                case 0: input = entity; break;
+                case 1: input = map; break;
+                case 2: input = Arrays.asList(entity, entity); break;
+                case 3: input = Arrays.asList(map, map); break;
+                case 4: input = new Plain[]{entity, entity}; break;
+                default: input = new Map[]{map, map};
+            }
+            Runnable restore = processor.encryptForExecution(input);
+            assertEquals("cipher", shape % 2 == 0 ? entity.plain : map.get("email"));
+            restore.run();
+            assertEquals("plain", entity.plain);
+            assertEquals("plain", map.get("email"));
+            processor.encrypt(input);
+            processor.decrypt(input);
+            assertEquals("plain", entity.plain);
+            assertEquals("plain", map.get("email"));
+        }
+    }
+
+    @Test
+    public void assertRejectsUnresolvedMaskShapesWithoutMutatingInput() throws Exception {
+        for (String mask : Arrays.asList("138****5678", "a***@example.com", "****")) {
+            for (String suffix : Arrays.asList("]", "#VIEW:bad]", "", "\n", "\r")) {
+                Map<String, Object> row = new HashMap<>();
+                String original = "text [#ordinary [#" + mask + suffix;
+                row.put("email", original);
+                try {
+                    processor.encrypt(row);
+                    fail("Unresolved masks must be rejected");
+                } catch (IllegalArgumentException expected) {
+                    assertEquals(original, row.get("email"));
+                }
+            }
+        }
+        verifyZeroInteractions(crypto, redis);
+    }
+
+    @Test
+    public void assertMyBatisLegacyArrayWrapperEncryptsAndRestores() throws Exception {
+        when(crypto.encryptWithCheck("plain")).thenReturn("cipher");
+        Plain row = new Plain();
+        row.plain = "plain";
+        Map<String, Object> parameters =
+                new org.apache.ibatis.session.defaults.DefaultSqlSession.StrictMap<>();
+        parameters.put("array", new Plain[]{row, row});
+        Runnable restore = processor.encryptForExecution(parameters);
+        assertEquals("cipher", row.plain);
+        verify(crypto).encryptWithCheck("plain");
+        restore.run();
+        assertEquals("plain", row.plain);
     }
 
     @Test
