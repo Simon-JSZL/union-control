@@ -169,7 +169,7 @@ public class SensitiveWriteJdbcTest {
                     new RedisRevealTokenStore(redis, 1800));
             configuration.addInterceptor(new AESInterceptor(processor, new AddressBookHandler(processor)));
             statement = new MappedStatement.Builder(configuration,
-                    "com.union.control.mapper.SensitiveDataDemoMapper.insert",
+                    "com.nucc.channel.ark.dao.mapper.announce.AnnounceMailMapper.insert",
                     parameter -> new BoundSql(configuration, "insert into sample(email) values (?)",
                             Collections.singletonList(new ParameterMapping.Builder(configuration,
                                     "email", String.class).build()), parameter), SqlCommandType.INSERT)

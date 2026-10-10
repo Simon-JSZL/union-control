@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>io.github.simon-jszl</groupId>
+    <artifactId>union-control-source</artifactId>
+    <version>1.3.6</version>
+    <packaging>pom</packaging>
+    <name>Union Control Source Distribution</name>
+    <description>Java source integration workspace for Union Agent. Sources are distributed as an attached source ZIP; this is not a compiled runtime dependency.</description>
+    <url>https://github.com/Simon-JSZL/union-control</url>
+    <licenses>
+        <license>
+            <name>The Apache License, Version 2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+    <developers>
+        <developer>
+            <id>Simon-JSZL</id>
+            <name>Simon-JSZL</name>
+            <url>https://github.com/Simon-JSZL</url>
+        </developer>
+    </developers>
+    <scm>
+        <connection>scm:git:https://github.com/Simon-JSZL/union-control.git</connection>
+        <developerConnection>scm:git:ssh://git@github.com/Simon-JSZL/union-control.git</developerConnection>
+        <url>https://github.com/Simon-JSZL/union-control</url>
+    </scm>
+</project>

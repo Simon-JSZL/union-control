@@ -146,6 +146,12 @@ Selected business changes are integrated into the existing production projects.
 
 ### Sensitive write integrity baseline
 
+As of 2026-09-29, AESInterceptor masks results only for statement IDs in
+`REVEAL_LIST` (SensitiveDataDemoMapper). All other known sensitive reads decrypt
+to plaintext, including AddressBook and mail queries, even in strict mode.
+`ADDRESS_BOOK`, query migration, and write encryption remain unchanged.
+Strict-mode and role-based display rules below apply only within `REVEAL_LIST`.
+
 Confirmed by the project owner on 2026-09-22: display availability must yield to
 write integrity. Masking/reveal failures may return an error; configured plaintext
 display is allowed when Redis or reveal tokens are unavailable. No display switch,
@@ -239,6 +245,25 @@ There is no execution-current/recovery endpoint, legacy event translation,
 SDK item API, heartbeat event, or dual-write path.
 
 ## Persistence
+
+Local operations tools reuse `RunningAnalysisMockService`, its existing Dubbo
+registration and the authenticated `AgentController` routes. `queryChanges` and
+`queryFaults` accept combined current/history/detail filters. The seven
+`t_indicator_*` interface names use the existing `queryBigData` route with
+separate table records and paginated returns matching py-app's contracts.
+`OperationsMockQueries` reads only the synthetic `mock/operations-v1.json`
+resource, whose field shapes follow the supplied production SQL/detail samples.
+The fixed analysis sample covers five institutions from 2026-09-01 through
+2026-10-04, with date-keyed running counts, linked change/fault scenarios and
+daily capability snapshots. Chain metrics aggregate the same member rows.
+Mock duration units are milliseconds, without asserting production units.
+July legacy scenarios remain available; dates outside the fixture are not
+generated on demand.
+New results explicitly report partial, mock coverage; unsupported filters and
+historical visibility fail rather than being ignored. No production SQL or new
+persistence is introduced. Production must replace the mock implementation and
+exclude its fixture, as with the existing running-analysis mocks.
+See `docs/operations-mock-contract.md` for mappings, sample scope and validation.
 
 `ai_conversation` owns only conversation metadata and status.
 

@@ -52,6 +52,17 @@ public class AESInterceptor implements Interceptor {
             "com.nucc.channel.ark.dao.mapper.announce.AnnounceUserGroupRelationMapper.selectNewUserByGroupId",
             "com.nucc.channel.ark.dao.mapper.announce.AnnounceAddressBookMapper.queryByUserAccount",
             "com.nucc.channel.ark.dao.mapper.announce.AnnounceUserGroupRelationMapper.selectUserByGroupId");
+    // Only these demo statements may mask results or issue reveal tokens.
+    private static final Set<String> REVEAL_LIST = statements(
+            "com.union.control.mapper.SensitiveDataDemoMapper.insertAddressBook",
+            "com.union.control.mapper.SensitiveDataDemoMapper.updateAddressBook",
+            "com.union.control.mapper.SensitiveDataDemoMapper.queryAddressBookById",
+            "com.union.control.mapper.SensitiveDataDemoMapper.queryAddressBook",
+            "com.union.control.mapper.SensitiveDataDemoMapper.insert",
+            "com.union.control.mapper.SensitiveDataDemoMapper.insertSaved",
+            "com.union.control.mapper.SensitiveDataDemoMapper.update",
+            "com.union.control.mapper.SensitiveDataDemoMapper.query",
+            "com.union.control.mapper.SensitiveDataDemoMapper.queryById");
     private static final Set<String> DECRYPT = statements(
             "com.union.control.mapper.SensitiveDataDemoMapper.query",
             "com.union.control.mapper.SensitiveDataDemoMapper.queryById",
@@ -160,7 +171,8 @@ public class AESInterceptor implements Interceptor {
         try {
             Object result = invocation.proceed();
             if (result == null) return null;
-            if (checkIfStrictMode() || (interceptorEnabled(statement.getId()) && getRevealEnabled())) processor.process(result);
+            if (REVEAL_LIST.contains(statement.getId())
+                    && (checkIfStrictMode() || (interceptorEnabled(statement.getId()) && getRevealEnabled()))) processor.process(result);
             else processor.decrypt(result);
             return result;
         } finally {
@@ -217,8 +229,8 @@ public class AESInterceptor implements Interceptor {
             if (statement.getSqlCommandType() != SqlCommandType.SELECT) return invocation.proceed();
             Object result = invocation.proceed();
             if (result != null) {
-                boolean revealEnabled = getRevealEnabled();
-                boolean strictMode = checkIfStrictMode();
+                boolean revealEnabled = REVEAL_LIST.contains(statement.getId()) && getRevealEnabled();
+                boolean strictMode = REVEAL_LIST.contains(statement.getId()) && checkIfStrictMode();
                 Set<String> plaintextRoles = revealEnabled && !strictMode
                         ? getPlaintextRoles() : Collections.emptySet();
                 addressBook.processResult(result, revealEnabled, strictMode, plaintextRoles);

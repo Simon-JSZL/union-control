@@ -9,6 +9,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -146,6 +147,26 @@ public class AgentController {
     public Map<String, Object> queryBigData(
             @RequestBody Map<String, Object> payload) {
         return runningAnalysis.queryBigData(request.json(payload));
+    }
+
+    @PostMapping("/queryChanges")
+    @AgentPermission("/assistantManager/page")
+    public Map<String, Object> queryChanges(@RequestBody Map<String, Object> payload) {
+        return runningAnalysis.queryChanges(request.json(payload));
+    }
+
+    @PostMapping("/queryFaults")
+    @AgentPermission("/assistantManager/page")
+    public Map<String, Object> queryFaults(@RequestBody Map<String, Object> payload) {
+        return runningAnalysis.queryFaults(request.json(payload));
+    }
+
+    @ExceptionHandler(RunningAnalysisMockService.QueryException.class)
+    public ResponseEntity<Map<String, Object>> queryError(RunningAnalysisMockService.QueryException error) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("code", error.getCode());
+        body.put("error", "运维查询未执行，请核对条件及 mock 支持范围。");
+        return ResponseEntity.status(error.getStatus()).body(body);
     }
 
     @PostMapping("/announceList")

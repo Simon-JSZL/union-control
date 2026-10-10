@@ -93,7 +93,7 @@ public class SensitiveReadJdbcTest {
                     String dockingType = dockingType(dockingScenario, Long.parseLong(id));
                     assertEquals(dockingType, row.getValue("dockingType"));
                     assertEquals(new Timestamp(1000L * Long.parseLong(id)), row.getValue("updatedAt"));
-                    boolean protectedRow = masking && !"D3".equals(dockingType);
+                    boolean protectedRow = false;
                     assertEquals(protectedRow, ((String) row.getValue("email")).contains("#VIEW:rt_"));
                     assertEquals(protectedRow, ((String) row.getValue("mobileNumber")).contains("#VIEW:rt_"));
                     assertEquals(protectedRow, ((String) row.getValue("telNumber")).contains("#VIEW:rt_"));
@@ -104,8 +104,7 @@ public class SensitiveReadJdbcTest {
                 verify(statement).execute();
                 verify(crypto, times(3)).decryptWithCheckNoLog(anyString());
                 verify(crypto, never()).encryptWithCheck(anyString());
-                if (masking && !"D3".equals(dockingScenario)) verify(redis).setexBatch(anyMap(), eq(1800));
-                else verifyZeroInteractions(redis);
+                verifyZeroInteractions(redis);
                 executor.close(true);
               }
             }
