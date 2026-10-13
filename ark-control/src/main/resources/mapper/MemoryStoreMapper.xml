@@ -6,13 +6,13 @@
 
     <select id="readMemory" resultType="map">
         SELECT content,version,last_operation_id AS operationId
-        FROM ai_memory_file
+        FROM t_m_announce_memory_file
         WHERE user_id=#{userId} AND path=#{path} AND delete_flag=1
     </select>
 
     <select id="listMemoryPaths" resultType="string">
         SELECT path
-        FROM ai_memory_file
+        FROM t_m_announce_memory_file
         WHERE user_id=#{userId} AND delete_flag=1 AND path LIKE #{prefix}
         ORDER BY path
         LIMIT #{limit}
@@ -20,39 +20,39 @@
 
     <select id="findMemoryOperation" resultType="map">
         SELECT fingerprint,result_version AS resultVersion,existed
-        FROM ai_memory_operation
+        FROM t_m_announce_memory_operation
         WHERE user_id=#{userId} AND operation_id=#{operationId}
         <if test="lock">FOR UPDATE</if>
     </select>
 
     <select id="currentMemoryVersion" resultType="long">
         SELECT COALESCE(MAX(version),0)
-        FROM ai_memory_file
+        FROM t_m_announce_memory_file
         WHERE user_id=#{userId} AND path=#{path}
     </select>
 
     <update id="updateMemoryFile">
-        UPDATE ai_memory_file
+        UPDATE t_m_announce_memory_file
         SET content=#{content},version=#{version},last_operation_id=#{operationId},
             updated_at=CURRENT_TIMESTAMP
         WHERE id=#{id} AND delete_flag=1
     </update>
 
     <insert id="insertMemoryFile">
-        INSERT INTO ai_memory_file
+        INSERT INTO t_m_announce_memory_file
             (user_id,path,content,version,last_operation_id,delete_flag)
         VALUES (#{userId},#{path},#{content},#{version},#{operationId},1)
     </insert>
 
     <update id="softDeleteMemoryFile">
-        UPDATE ai_memory_file
+        UPDATE t_m_announce_memory_file
         SET delete_flag=0,updated_at=CURRENT_TIMESTAMP
         WHERE id=#{id} AND delete_flag=1
     </update>
 
     <select id="searchMemory" resultType="map">
         SELECT path,content
-        FROM ai_memory_file
+        FROM t_m_announce_memory_file
         WHERE user_id=#{userId} AND delete_flag=1 AND path LIKE #{prefix}
         ORDER BY path
         LIMIT #{limit}
@@ -60,13 +60,13 @@
 
     <select id="findMemoryRow" resultType="map">
         SELECT id,version
-        FROM ai_memory_file
+        FROM t_m_announce_memory_file
         WHERE user_id=#{userId} AND path=#{path} AND delete_flag=1
         FOR UPDATE
     </select>
 
     <insert id="insertMemoryOperation">
-        INSERT INTO ai_memory_operation
+        INSERT INTO t_m_announce_memory_operation
             (user_id,operation_id,fingerprint,result_version,existed,delete_flag)
         VALUES (#{userId},#{operationId},#{fingerprint},#{version},#{existed},1)
     </insert>

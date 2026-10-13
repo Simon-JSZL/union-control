@@ -113,9 +113,8 @@ Selected business changes are integrated into the existing production projects.
   but must not be reported as missing production schema/configuration or as
   production scheduling being enabled without evidence from the integration.
 - Production excludes all demo/mock implementations and their wiring. This
-  includes local sensitive crypto/auth substitutes, compatibility copies,
-  `SensitiveDataDemo*`, and `RunningAnalysisMockService*`. Production retains
-  its real crypto, authentication, and business services. Exclusion also covers
+  includes local authentication substitutes and `RunningAnalysisMockService*`.
+  Production retains its real crypto, authentication, and business services. Exclusion also covers
   demo controller methods, constructor dependencies, mapper registrations, and
   Dubbo references/exports; removing only the implementation files is insufficient.
 - Production already has its own complete Dubbo logging. It does not import
@@ -144,38 +143,11 @@ Selected business changes are integrated into the existing production projects.
   dependency compatibility. Host-specific dependency overrides take precedence
   over a Boot version alone.
 
-### Sensitive write integrity baseline
+### Retired sensitive feature
 
-As of 2026-09-29, AESInterceptor masks results only for statement IDs in
-`REVEAL_LIST` (SensitiveDataDemoMapper). All other known sensitive reads decrypt
-to plaintext, including AddressBook and mail queries, even in strict mode.
-`ADDRESS_BOOK`, query migration, and write encryption remain unchanged.
-Strict-mode and role-based display rules below apply only within `REVEAL_LIST`.
-
-Confirmed by the project owner on 2026-09-22: display availability must yield to
-write integrity. Masking/reveal failures may return an error; configured plaintext
-display is allowed when Redis or reveal tokens are unavailable. No display switch,
-Redis failure, expired token, crypto error, batch shape, or retry may cause a
-masked display value or an unencrypted sensitive value to be stored.
-
-- Known sensitive writes always restore valid reveal markers and execute their
-  original annotation/key-specific encryption. `interceptorItems`, reveal mode,
-  strict mode, and plaintext roles must never bypass write encryption.
-- Known sensitive reads must still decode stored ciphertext when display masking
-  is disabled, so editing cannot submit raw database ciphertext for encryption again.
-- Recognize actual mask formats, not arbitrary `[#`, `#VIEW:`, or `****` text.
-  Recognizable unresolved/malformed masks, invalid tokens, failed restoration,
-  invalid field types, and invalid encryption results must abort before SQL.
-- Support actual MyBatis wrappers and aliases, stage all field conversions before
-  mutating parameters, and restore caller inputs after JDBC binding on success or
-  failure. Preserve generated keys and ordinary fields; never double-encrypt retries.
-- Preserve the existing storage codecs and production AddressBook manual encryption
-  boundary. Do not add its production writes to the query-migration interceptor.
-- Production acceptance requires matching the actual mapper statement IDs, parameter
-  shapes, dependency versions, interceptor registration, and crypto contract. A local
-  regression suite is evidence for the tested paths, not proof for absent host code.
-
-See `docs/sensitive-write-baseline.md` for the audit and validation scope.
+The sensitive feature was retired from this workspace on 2026-10-13.
+Its implementation and tests remain in Git history at commit `9e5fed9`;
+future production maintenance does not use this workspace version.
 
 ### Cross-service timeout review
 
@@ -246,6 +218,11 @@ SDK item API, heartbeat event, or dual-write path.
 
 ## Persistence
 
+The seven Agent tables use `t_m_announce_` followed by two name segments.
+Relationships use logical references without physical foreign keys; primary keys,
+business unique constraints, and query indexes are retained. Services maintain
+related writes and logical deletes within their existing transactions.
+
 Local operations tools reuse `RunningAnalysisMockService`, its existing Dubbo
 registration and the authenticated `AgentController` routes. `queryChanges` and
 `queryFaults` accept combined current/history/detail filters. The seven
@@ -265,16 +242,16 @@ persistence is introduced. Production must replace the mock implementation and
 exclude its fixture, as with the existing running-analysis mocks.
 See `docs/operations-mock-contract.md` for mappings, sample scope and validation.
 
-`ai_conversation` owns only conversation metadata and status.
+`t_m_announce_ai_conversation` owns only conversation metadata and status.
 
-`ai_agent_execution` stores the root and child execution snapshots submitted by
+`t_m_announce_ai_execution` stores the root and child execution snapshots submitted by
 py-app. Control does not enforce Agent concurrency or execution topology.
 
-`ai_conversation_message` stores:
+`t_m_announce_ai_message` stores:
 
 - message ID
 - role and role-specific JSON payload
-- an `agent_execution_id` foreign key
+- an `agent_execution_id` logical reference
 - a stable per-conversation sequence
 - `delete_flag`
 
@@ -286,48 +263,11 @@ timeouts, cancellation precedence, root/child lifecycle, and the final status;
 control persists the final snapshot without maintaining a second execution
 state machine.
 
-`ai_memory_file` and `ai_memory_operation` implement PydanticAI Harness
+`t_m_announce_memory_file` and `t_m_announce_memory_operation` implement PydanticAI Harness
 `SearchableMemoryStore` semantics: bounded read/list/search, CAS versioning,
 operation-ID idempotency, and operation fingerprint conflicts.
 
-The local sensitive-data implementation mirrors the restored production
-`AESInterceptor` and `SymmetricalSecurityUtils` contracts. Sensitive statements
-route through general encryption, general decryption, or the AddressBook table
-migration branch. The global reveal mode replaces sensitive plaintext fragments
-with masks and short-lived Redis tokens. As clarified by the project owner on
-2026-09-23, production AddressBook plaintext eligibility uses the returned
-`docking_type` (`dockingType` on the DTO), not the caller's login role. The local
-demo retains its `role` field when no production docking-type field is present.
-An explicitly configured value may remain plaintext; missing, unknown, or invalid
-values stay masked. A present but null docking-type field must not fall back to
-`role`. The authenticated reveal API decrypts only the token's
-fragment. The local simulation supplies a non-cryptographic `sensitiveProxy`
-under the default or explicit `local-sensitive-mock` profile. This substitute
-is excluded from production, which retains its existing real proxy.
-
-Production AddressBook submission keeps its existing manual encryption and
-MyBatis-Plus insertOrUpdateBatch flow. Only the service's three sensitive inputs
-(email and the existing two phone fields) are restored from complete reveal-token
-markers before the original validation/encryption. Do not add production write
-statements to the query interceptor or change production Mapper SQL for this feature.
-Expired/malformed markers reject submission. The local demo service illustrates
-restoration before its pre-existing local persistence path.
-
-`sensitive.reveal.strict_mode` defaults to false and must have the same value
-on every Web and Control instance. When true, Control forces the existing
-masking flow even if `getRevealEnabled()` returns false, and AddressBook ignores
-its plaintext-role whitelist. Web requires a two-minute, user- and token-bound
-image captcha before calling the unchanged reveal service. Captchas are generated
-with the production Kaptcha `Producer` and stored only as an attribute of the
-existing Shiro login session; no captcha Redis adapter, database table, or Dubbo
-contract is added. A new image replaces the session's previous challenge and
-each submission consumes it, including failed attempts. The local JVM lock does
-not provide distributed atomic consumption: use session affinity for concurrent
-requests, and do not claim cross-node exactly-once verification. The existing
-production session DAO may itself use Redis; this feature does not replace it.
-See `docs/sensitive-reveal-strict-mode.md` for the browser contract and rollout.
-
-`agent_scheduled_task` and `agent_scheduled_task_run` persist task definitions
+`t_m_announce_scheduled_task` and `t_m_announce_scheduled_run` persist task definitions
 and individual outcomes. The task table owns the natural-language prompt,
 schedule definition, state, timezone, and next due time. The run table owns one
 scheduled occurrence, its execution state, stored result or safe error, unread
@@ -448,8 +388,8 @@ Roll back in this order:
    no new run is claimed; allow or explicitly terminate in-flight work.
 2. Roll back the web UI, then control, then py-app. The scheduled-task tables
    may remain in place.
-3. If the tables must be removed, drop `agent_scheduled_task_run` first and
-   `agent_scheduled_task` second because of the foreign key.
+3. If the tables must be removed, drop `t_m_announce_scheduled_run` and
+   `t_m_announce_scheduled_task`; neither has a physical foreign key.
 
 ## Deployment boundary
 

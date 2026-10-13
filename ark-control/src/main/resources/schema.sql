@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS `ai_conversation` (
+CREATE TABLE IF NOT EXISTS `t_m_announce_ai_conversation` (
   `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '数据库自增主键',
   `conversation_id` VARCHAR(64) COLLATE utf8mb4_bin NOT NULL COMMENT '业务会话标识，对应 AG-UI threadId',
   `user_id` VARCHAR(64) COLLATE utf8mb4_bin NOT NULL COMMENT '会话所属用户标识',
@@ -11,9 +11,9 @@ CREATE TABLE IF NOT EXISTS `ai_conversation` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_conversation_id` (`conversation_id`),
   KEY `idx_conversation_user_list` (`user_id`, `delete_flag`, `status`, `updated_at`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Agent会话记录表';
 
-CREATE TABLE IF NOT EXISTS `ai_agent_execution` (
+CREATE TABLE IF NOT EXISTS `t_m_announce_ai_execution` (
   `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '数据库自增主键',
   `run_id` VARCHAR(64) COLLATE utf8mb4_bin NOT NULL COMMENT 'Agent 执行业务标识',
   `conversation_id` VARCHAR(64) COLLATE utf8mb4_bin NOT NULL COMMENT '所属业务会话标识',
@@ -33,14 +33,10 @@ CREATE TABLE IF NOT EXISTS `ai_agent_execution` (
   UNIQUE KEY `uk_parent_delegation_call` (`parent_execution_id`, `delegation_tool_call_id`),
   KEY `idx_execution_conversation` (`conversation_id`, `delete_flag`, `created_at`),
   KEY `idx_execution_parent` (`parent_execution_id`, `delete_flag`, `created_at`),
-  KEY `idx_execution_user_status` (`user_id`, `delete_flag`, `status`),
-  CONSTRAINT `fk_execution_conversation` FOREIGN KEY (`conversation_id`)
-    REFERENCES `ai_conversation` (`conversation_id`),
-  CONSTRAINT `fk_execution_parent` FOREIGN KEY (`parent_execution_id`)
-    REFERENCES `ai_agent_execution` (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+  KEY `idx_execution_user_status` (`user_id`, `delete_flag`, `status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Agent执行记录表';
 
-CREATE TABLE IF NOT EXISTS `ai_conversation_message` (
+CREATE TABLE IF NOT EXISTS `t_m_announce_ai_message` (
   `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '数据库自增主键',
   `message_id` VARCHAR(128) COLLATE utf8mb4_bin NOT NULL COMMENT '消息业务标识',
   `conversation_id` VARCHAR(64) COLLATE utf8mb4_bin NOT NULL COMMENT '所属业务会话标识',
@@ -56,14 +52,10 @@ CREATE TABLE IF NOT EXISTS `ai_conversation_message` (
   UNIQUE KEY `uk_conversation_message` (`conversation_id`, `message_id`),
   UNIQUE KEY `uk_conversation_sequence` (`conversation_id`, `sequence_no`),
   KEY `idx_message_history` (`conversation_id`, `user_id`, `delete_flag`, `sequence_no`),
-  KEY `idx_message_execution` (`agent_execution_id`, `delete_flag`, `sequence_no`),
-  CONSTRAINT `fk_message_conversation` FOREIGN KEY (`conversation_id`)
-    REFERENCES `ai_conversation` (`conversation_id`),
-  CONSTRAINT `fk_message_execution` FOREIGN KEY (`agent_execution_id`)
-    REFERENCES `ai_agent_execution` (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+  KEY `idx_message_execution` (`agent_execution_id`, `delete_flag`, `sequence_no`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Agent会话消息表';
 
-CREATE TABLE IF NOT EXISTS `ai_memory_file` (
+CREATE TABLE IF NOT EXISTS `t_m_announce_memory_file` (
   `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '数据库自增主键',
   `user_id` VARCHAR(64) COLLATE utf8mb4_bin NOT NULL COMMENT '记忆文件所属用户标识',
   `path` VARCHAR(512) COLLATE utf8mb4_bin NOT NULL COMMENT '用户命名空间内的文件路径',
@@ -79,9 +71,9 @@ CREATE TABLE IF NOT EXISTS `ai_memory_file` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_memory_file_active_path` (`user_id`, `active_path`),
   KEY `idx_memory_file_prefix` (`user_id`, `delete_flag`, `path`(191))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Agent记忆文件表';
 
-CREATE TABLE IF NOT EXISTS `ai_memory_operation` (
+CREATE TABLE IF NOT EXISTS `t_m_announce_memory_operation` (
   `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '数据库自增主键',
   `user_id` VARCHAR(64) COLLATE utf8mb4_bin NOT NULL COMMENT '操作所属用户标识',
   `operation_id` VARCHAR(128) COLLATE utf8mb4_bin NOT NULL COMMENT '客户端幂等操作标识',
@@ -93,9 +85,9 @@ CREATE TABLE IF NOT EXISTS `ai_memory_operation` (
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '最后更新时间',
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_memory_operation` (`user_id`, `operation_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Agent记忆操作幂等记录表';
 
-CREATE TABLE IF NOT EXISTS `agent_scheduled_task` (
+CREATE TABLE IF NOT EXISTS `t_m_announce_scheduled_task` (
   `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '数据库自增主键',
   `user_id` VARCHAR(64) COLLATE utf8mb4_bin NOT NULL COMMENT '任务所属用户标识',
   `org_code` VARCHAR(64) COLLATE utf8mb4_bin NOT NULL COMMENT '任务创建时的机构快照',
@@ -115,9 +107,9 @@ CREATE TABLE IF NOT EXISTS `agent_scheduled_task` (
   PRIMARY KEY (`id`),
   KEY `idx_scheduled_task_due` (`delete_flag`, `status`, `next_run_at`),
   KEY `idx_scheduled_task_user` (`user_id`, `delete_flag`, `updated_at`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Agent定时任务定义表';
 
-CREATE TABLE IF NOT EXISTS `agent_scheduled_task_run` (
+CREATE TABLE IF NOT EXISTS `t_m_announce_scheduled_run` (
   `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '数据库自增主键',
   `task_id` BIGINT UNSIGNED NOT NULL COMMENT '所属定时任务主键',
   `scheduled_at` DATETIME(3) NOT NULL COMMENT '本次计划执行时间，UTC',
@@ -140,7 +132,5 @@ CREATE TABLE IF NOT EXISTS `agent_scheduled_task_run` (
   KEY `idx_scheduled_run_task` (`task_id`, `delete_flag`, `scheduled_at`),
   KEY `idx_scheduled_run_status` (`delete_flag`, `status`, `created_at`),
   KEY `idx_scheduled_run_unread` (`delete_flag`, `status`, `read_flag`, `finished_at`),
-  KEY `idx_scheduled_run_conversation` (`result_conversation_id`),
-  CONSTRAINT `fk_scheduled_run_task` FOREIGN KEY (`task_id`)
-    REFERENCES `agent_scheduled_task` (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+  KEY `idx_scheduled_run_conversation` (`result_conversation_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Agent定时任务运行记录表';

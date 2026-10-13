@@ -102,7 +102,7 @@
 使用 Java 8，无需数据库或启动服务：
 
 ```bash
-mvn -pl ark-control -am -Dsensitive.test.source=import-test/operations \
+mvn -pl ark-control -am -Dtest.source=import-test/operations \
   -Dtest=OperationsMockQueryTest -Dsurefire.failIfNoSpecifiedTests=false test
 /path/to/union-py-app/.venv/bin/python \
   ark-control/import-test/operations/verify_py_contract.py /path/to/union-py-app \

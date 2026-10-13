@@ -74,10 +74,6 @@ Configuration:
 - `SCHEDULED_TASK_MAX_RUN_SECONDS` (default `930`)
 - `SCHEDULED_TASK_TOKEN_TTL_SECONDS` (default `960`; must exceed the max run time)
 - `MYSQL_URL`, `MYSQL_USER`, `MYSQL_PASSWORD` (`MYSQL_URL` must use a UTC connection timezone)
-- `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, `REDIS_TIMEOUT_MS`
-- `SENSITIVE_REVEAL_ENABLED` (local application.properties defaults to `true`;
-  production supplies its own setting)
-- `SENSITIVE_REVEAL_TTL_SECONDS` (default `300`)
 
 For local Dubbo without ZooKeeper, set `DUBBO_REGISTRY_ADDRESS=N/A` on both
 applications and set `DUBBO_DIRECT_URL=dubbo://ark-control.localhost:20880` on
@@ -85,13 +81,6 @@ applications and set `DUBBO_DIRECT_URL=dubbo://ark-control.localhost:20880` on
 rewrites loopback to the machine's preferred network address, which may be a
 VPN interface. Remove any per-interface `-Dcom.union.control.service.*` direct
 URL VM options because they override `DUBBO_DIRECT_URL`.
-
-The unavailable production `sensitiveProxy` has an intentionally non-cryptographic
-local stand-in. It is enabled for the default local profile and for the explicit
-`local-sensitive-mock` profile. Production must activate its production profile
-and keep the existing AES256 proxy binding.
-The Maven `local-sensitive-compat` profile is active by default; when combining
-it with another Maven profile, enable both explicitly with `-Pother,local-sensitive-compat`.
 
 The unavailable production authentication service has one local substitute at
 `ark-web/src/local-mock/java/com/epcc/arkweb/mock/ArkAuthServiceMock.java`,
@@ -114,7 +103,7 @@ Production already maintains its own correct schema and configuration.
 scheduled-task simulation reference. These local files and standalone JARs are
 not production deployment inputs; see PROJECT_OVERVIEW.md for the integration boundary.
 
-Natural-language scheduled tasks use the two `agent_scheduled_task*` tables and
+Natural-language scheduled tasks use `t_m_announce_scheduled_task` and `t_m_announce_scheduled_run` and
 snapshot the authenticated CAS principal's `userId`, `orgCode`, and selected
 Ark `roleId` on create and update.
 The scheduler stores only the successful py-app result's `content` and
@@ -131,29 +120,6 @@ trusted context. Subsequent `/agent/*` tools must send that value in
 accepted only by the authorization endpoint. No scheduled Realm, synthetic
 Subject, or tool endpoint copy is introduced.
 Each user may keep at most 100 `ACTIVE` or `PAUSED` tasks.
-
-The isolated sensitive-data demo mirrors the production database boundary.
-`POST /api/sensitive/reveal/demo/insert` and
-`GET /api/sensitive/reveal/demo/query` exercise field encryption on write and
-masking on read. AddressBook demos use the `/demo/address-book/insert` and
-`/demo/address-book/query` suffixes under `/api/sensitive/reveal`.
-The reveal hook replaces plaintext fragments with masks and short-lived bearer
-tokens. `POST /api/sensitive/reveal` requires the existing authenticated
-permission and resolves the fragment token; this version does not bind tokens
-to their owner's identity. Local authentication uses `local-auth-mock` and its
-normal Shiro session, not a hard-coded CAS cookie. The crypto mock prefixes and
-Base64-encodes data; it is not encryption. Production excludes the demo and mock
-code and retains its own authentication, crypto, configuration, and Dubbo logs.
-
-Set `sensitive.reveal.strict_mode=true` on both Web and Control to require a
-Web-session image captcha before reveal and mask all AddressBook roles. Omission
-or false preserves the original mode. The local environment variable is
-`SENSITIVE_REVEAL_STRICT_MODE` in both applications. Browser clients read
-`GET /api/sensitive/reveal/options`, fetch a PNG from
-`POST /api/sensitive/reveal/captcha` with `{token}`, then submit
-`{token, captchaCode}` to the existing reveal endpoint. See
-[the strict-mode integration guide](docs/sensitive-reveal-strict-mode.md) for
-error handling, session requirements, and production integration boundaries.
 
 Streaming, sync, and scheduled py execution use `AGENT_MAX_RUN_SECONDS` (900
 seconds by default). Sync and scheduled return HTTP 504 with `execution_timeout`
