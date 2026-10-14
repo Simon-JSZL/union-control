@@ -42,6 +42,8 @@ public class AgentProxyServiceImpl implements AgentProxyService {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout((int) millis);
         factory.setReadTimeout((int) millis);
+        // Preserve 401 JSON responses instead of HttpURLConnection throwing HttpRetryException.
+        factory.setOutputStreaming(false);
         http.setRequestFactory(factory);
     }
 

@@ -228,6 +228,9 @@ is no scheduled-task-specific model endpoint.
   the owner-scoped cancellation request to py-app. Control does not maintain a
   second cancellation state.
 - `POST /llm/chatMessageSync` keeps the product `{content}` response.
+  Model-provider 401/403 failures use HTTP 502 with the existing bounded
+  error/code/model fields; caller authentication failures retain 401/403.
+  The non-stream Java proxy preserves Py's JSON error response and status.
 
 There is no execution-current/recovery endpoint, legacy event translation,
 SDK item API, heartbeat event, or dual-write path.
