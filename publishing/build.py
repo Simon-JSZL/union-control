@@ -24,17 +24,13 @@ def build():
     candidates = subprocess.check_output(
         ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
         cwd=ROOT).decode().split("\0")
-    modules = {"ark-control-facade", "ark-control", "ark-web"}
-    extra = {"pom.xml", "README.md", "PROJECT_OVERVIEW.md", "LICENSE",
-             "publishing/README.md",
-             "publishing/pom.xml", "publishing/build.py", "publishing/test_build.py", "package.json"}
-    selected = set(extra)
+    ignored = set(subprocess.check_output(
+        ["git", "ls-files", "--cached", "--ignored", "--exclude-standard", "-z"],
+        cwd=ROOT).decode().split("\0"))
+    selected = set()
     for name in candidates:
         path = Path(name)
-        if not name or path.parts[0] not in modules:
-            continue
-        if (path.name == ".DS_Store" or "target" in path.parts or "/src/test/" in name
-                or path.name in {"application.properties", "application.yml", "schema.sql"}):
+        if not name or name in ignored:
             continue
         if (ROOT / path).is_symlink():
             raise ValueError(f"Refusing symlink: {name}")
@@ -57,8 +53,6 @@ def build():
         }, indent=2) + "\n")
     with zipfile.ZipFile(archive) as z:
         assert z.testzip() is None
-        for module in modules:
-            assert f"{base}/{module}/pom.xml" in z.namelist()
         for name, digest in manifest.items():
             assert hashlib.sha256(z.read(f"{base}/{name}")).hexdigest() == digest
     published_pom = layout / f"{base}.pom"

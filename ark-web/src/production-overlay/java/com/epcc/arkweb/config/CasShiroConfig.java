@@ -1,5 +1,9 @@
 package com.epcc.arkweb.config;
 
+import com.epcc.arkweb.web.llm.AgentAuthorizationFilter;
+import com.union.control.service.ScheduledTaskService;
+import org.springframework.beans.factory.annotation.Qualifier;
+
 import com.epcc.arkweb.service.redis.ShiroSessionRedisDao;
 import com.epcc.arkweb.service.shirosession.ShiroSessionListener;
 import com.epcc.baseservice.dal.service.UnifyRedisService;
@@ -129,13 +133,15 @@ public class CasShiroConfig {
     }
 
     @Bean(name = "shiroFilter")
-    public ShiroFilterFactoryBean shiroFilter(SecurityManager securityManager, CasFilter casFilter){
+    public ShiroFilterFactoryBean shiroFilter(SecurityManager securityManager, CasFilter casFilter,
+            ScheduledTaskService scheduledTasks, @Qualifier("arkAuthService") Object arkAuthService){
         ShiroFilterFactoryBean shiroFilterFactoryBean = new ShiroFilterFactoryBean();
         shiroFilterFactoryBean.setSecurityManager(securityManager);
         shiroFilterFactoryBean.setLoginUrl(loginUrl);
         shiroFilterFactoryBean.setUnauthorizedUrl(unauthorizedUrl);
 
         Map<String,Filter> filters = new HashMap<>();
+        filters.put("agentAuth", new AgentAuthorizationFilter(scheduledTasks, arkAuthService));
         filters.put("casFilter",casFilter);
         shiroFilterFactoryBean.setFilters(filters);
         //拦截器.
@@ -147,7 +153,7 @@ public class CasShiroConfig {
         filterMap.put("/script/**", "anon");
         filterMap.put("/plugins/**", "anon");
         filterMap.put("/api/**", "anon");
-        filterMap.put("/agent/**", "anon");
+        filterMap.put("/agent/**", "agentAuth");
         filterMap.put("/lhyw/kickidc", "anon");
         filterMap.put("/lhyw/recoverIdc", "anon");
         filterMap.put("/lhyw/kickidc/healthcheck", "anon");

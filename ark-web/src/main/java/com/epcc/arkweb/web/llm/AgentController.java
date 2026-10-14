@@ -21,13 +21,11 @@ import java.util.LinkedHashMap;
 @RestController
 @RequestMapping("/agent")
 public class AgentController {
-    private static final String EXECUTE_PERMISSION = "/assistantManager/page";
     private final ConversationService conversations;
     private final AgentExecutionService executions;
     private final MemoryStoreService memoryStore;
     private final RunningAnalysisMockService runningAnalysis;
     private final AuthenticatedRequest request;
-    private final AgentAuthorizationInterceptor authorization;
 
     @Autowired
     public AgentController(
@@ -35,35 +33,24 @@ public class AgentController {
             AgentExecutionService executions,
             MemoryStoreService memoryStore,
             RunningAnalysisMockService runningAnalysis,
-            AuthenticatedRequest request,
-            AgentAuthorizationInterceptor authorization) {
+            AuthenticatedRequest request) {
         this.conversations = conversations;
         this.executions = executions;
         this.memoryStore = memoryStore;
         this.runningAnalysis = runningAnalysis;
         this.request = request;
-        this.authorization = authorization;
     }
 
-    /** Validates the run-scoped token and performs the real-time role-resource check. */
+    /** Returns the Scheduled identity already validated by the Shiro Agent filter. */
     @PostMapping("/scheduledTaskAuthorize")
     public ResponseEntity<Map<String, Object>> scheduledTaskAuthorize(
-            @org.springframework.web.bind.annotation.RequestHeader(
-                    value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
             @RequestBody(required = false) Object payload) {
         if (payload != null && (!(payload instanceof Map) || !((Map<?, ?>) payload).isEmpty()))
             return unauthorized();
-        try {
-            Map<String, Object> context = this.authorization.authorize(
-                    authorization, EXECUTE_PERMISSION);
-            Map<String, Object> data = new LinkedHashMap<>(context);
-            // The value is an opaque, database-backed capability for subsequent tool calls.
-            data.put("trustedContext", authorization);
-            return ResponseEntity.ok().header(HttpHeaders.CACHE_CONTROL, "no-store")
-                    .body(success(data));
-        } catch (RuntimeException error) {
-            return unauthorized();
-        }
+        Map<String, Object> context = AgentAuthorizationFilter.currentContext();
+        if (context == null) return unauthorized();
+        return ResponseEntity.ok().header(HttpHeaders.CACHE_CONTROL, "no-store")
+                .body(success(context));
     }
 
     private static ResponseEntity<Map<String, Object>> unauthorized() {
@@ -80,83 +67,71 @@ public class AgentController {
     }
 
     @PostMapping("/getConversationMessages")
-    @AgentPermission("/assistantManager/page")
     public Map<String, Object> messages(
             @RequestBody Map<String, Object> payload) {
         return conversations.conversationMessages(request.json(payload));
     }
 
     @PostMapping("/completeRun")
-    @AgentPermission("/assistantManager/page")
     public Map<String, Object> completeRun(
             @RequestBody Map<String, Object> payload) {
         return executions.completeRun(request.json(payload));
     }
 
     @PostMapping("/memoryStore/read")
-    @AgentPermission("/assistantManager/page")
     public Map<String, Object> memoryRead(
             @RequestBody Map<String, Object> payload) {
         return memoryStore.memoryRead(request.json(payload));
     }
 
     @PostMapping("/memoryStore/list")
-    @AgentPermission("/assistantManager/page")
     public Map<String, Object> memoryList(
             @RequestBody Map<String, Object> payload) {
         return memoryStore.memoryList(request.json(payload));
     }
 
     @PostMapping("/memoryStore/operation")
-    @AgentPermission("/assistantManager/page")
     public Map<String, Object> memoryOperation(
             @RequestBody Map<String, Object> payload) {
         return memoryStore.memoryOperation(request.json(payload));
     }
 
     @PostMapping("/memoryStore/write")
-    @AgentPermission("/assistantManager/page")
     public Map<String, Object> memoryWrite(
             @RequestBody Map<String, Object> payload) {
         return memoryStore.memoryWrite(request.json(payload));
     }
 
     @PostMapping("/memoryStore/delete")
-    @AgentPermission("/assistantManager/page")
     public Map<String, Object> memoryDelete(
             @RequestBody Map<String, Object> payload) {
         return memoryStore.memoryDelete(request.json(payload));
     }
 
     @PostMapping("/memoryStore/search")
-    @AgentPermission("/assistantManager/page")
     public Map<String, Object> memorySearch(
             @RequestBody Map<String, Object> payload) {
         return memoryStore.memorySearch(request.json(payload));
     }
 
     @PostMapping("/getOrgInfo")
-    @AgentPermission("/assistantManager/page")
     public Map<String, Object> getOrgInfo(
             @RequestBody Map<String, Object> payload) {
         return runningAnalysis.getOrgInfo(request.json(payload));
     }
 
     @PostMapping("/queryBigData")
-    @AgentPermission("/assistantManager/page")
     public Map<String, Object> queryBigData(
             @RequestBody Map<String, Object> payload) {
         return runningAnalysis.queryBigData(request.json(payload));
     }
 
     @PostMapping("/queryChanges")
-    @AgentPermission("/assistantManager/page")
     public Map<String, Object> queryChanges(@RequestBody Map<String, Object> payload) {
         return runningAnalysis.queryChanges(request.json(payload));
     }
 
     @PostMapping("/queryFaults")
-    @AgentPermission("/assistantManager/page")
     public Map<String, Object> queryFaults(@RequestBody Map<String, Object> payload) {
         return runningAnalysis.queryFaults(request.json(payload));
     }
@@ -170,14 +145,12 @@ public class AgentController {
     }
 
     @PostMapping("/announceList")
-    @AgentPermission("/assistantManager/page")
     public Map<String, Object> announceList(
             @RequestBody Map<String, Object> payload) {
         return runningAnalysis.announceList(request.json(payload));
     }
 
     @PostMapping("/getJiraInfo")
-    @AgentPermission("/assistantManager/page")
     public Map<String, Object> getJiraInfo(
             @RequestBody Map<String, Object> payload) {
         return runningAnalysis.getJiraInfo(request.json(payload));

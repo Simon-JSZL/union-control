@@ -1,5 +1,9 @@
 package com.epcc.arkweb.config;
 
+import com.epcc.arkweb.web.llm.AgentAuthorizationFilter;
+import com.union.control.service.ScheduledTaskService;
+import org.springframework.beans.factory.annotation.Qualifier;
+
 import com.epcc.arkweb.filter.LoginFormFilter;
 import com.epcc.arkweb.service.redis.ShiroSessionRedisDao;
 import com.epcc.arkweb.service.shirosession.ShiroSessionListener;
@@ -37,7 +41,8 @@ public class ShiroConfig {
     private String cookieSecure;
 
     @Bean
-    public ShiroFilterFactoryBean shiroFilterFactoryBean(SecurityManager securityManager) {
+    public ShiroFilterFactoryBean shiroFilterFactoryBean(SecurityManager securityManager,
+            ScheduledTaskService scheduledTasks, @Qualifier("arkAuthService") Object arkAuthService) {
         ShiroFilterFactoryBean shiroFilterFactoryBean = new ShiroFilterFactoryBean();
         shiroFilterFactoryBean.setSecurityManager(securityManager);
         //拦截器.
@@ -53,7 +58,7 @@ public class ShiroConfig {
         filterMap.put("/.ico", "anon");
         filterMap.put("/healthcheck.html", "anon");
         filterMap.put("/SSL/healthcheck.html", "anon");
-        filterMap.put("/agent/**", "anon");
+        filterMap.put("/agent/**", "agentAuth");
         //配置退出 过滤器,其中的具体的退出代码Shiro已经替我们实现了
 //        filterMap.put("/loginOut.do", "logout");
 
@@ -70,6 +75,7 @@ public class ShiroConfig {
         shiroFilterFactoryBean.setSuccessUrl("/index.html");
         Map<String, Filter> filters = new HashMap<>();
         LoginFormFilter loginFormFilter = new LoginFormFilter(propFlag);
+        filters.put("agentAuth", new AgentAuthorizationFilter(scheduledTasks, arkAuthService));
         filters.put("authc",loginFormFilter);
         shiroFilterFactoryBean.setFilters(filters);
 

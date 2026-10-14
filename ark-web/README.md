@@ -4,7 +4,7 @@ This is the browser-facing module merged into the existing production Web
 application. It owns the new HTTP controllers and final SSE response while
 reusing the production Shiro Realm and Filter implementations.
 Its standalone startup uses the production class and bean names
-`ShiroConfig`, `Realm`, `LoginFormFilter`, and `InterceptorConfig`, and follows
+`ShiroConfig`, `Realm`, and `LoginFormFilter`, and follows
 the same Shiro Filter -> Realm -> Subject -> permission path. Production uses
 the host application's existing implementations.
 Business and persistence services are consumed from
@@ -26,29 +26,32 @@ ark-web/src/main/java/com/epcc/arkweb/
 `com.union.control.service.ScheduledTaskService` from the shared facade. Its
 implementation is published by `ark-control`.
 
-`AgentController` keeps the production CAS path for interactive py calls. Its
-scheduled authorization endpoint validates a Control-issued token and performs
-the real-time role-resource check. Agent tools use a non-Shiro
-`@AgentPermission` guard and a Control-backed trusted context; only the
-`X-Agent-Trusted-Context` value returned by that endpoint is accepted for tool
-calls. No scheduled Realm or synthetic Subject is created.
-The controller lives under `/agent/**`; it must not use production's anonymous
-`/api/**` namespace. Both production filter-chain maps place `/agent/** -> anon`
-before `/** -> authc`, delegating this exact namespace to the fail-closed Agent
-guard. No scheduled Shiro Filter or Realm is introduced.
+`AgentController` keeps the production CAS path for interactive py calls.
+Both production filter-chain maps use `/agent/** -> agentAuth` before
+`/** -> authc`. `AgentAuthorizationFilter` protects every Agent URL with the
+existing `/assistantManager/page` permission. It uses the current Subject for
+CAS requests and validates the Control-issued token plus live role resources
+for Scheduled requests. Scheduled credentials do not log in a Subject or create
+a session. The filter is constructed inside the Shiro configuration, never
+registered as a global servlet filter.
+
+Scheduled entry and tool calls all carry `Authorization: Scheduled <token>`.
+`scheduledTaskAuthorize` returns only the run identity already checked by the
+filter, without returning a credential. There is no trusted-context header,
+MVC Agent interceptor, or per-method Agent permission annotation.
+The controller stays under `/agent/**`, not production's anonymous `/api/**`.
 
 The copy-ready production files live under `src/production-overlay/java` and
-are not part of the standalone module's compilation source set. The two Shiro
-files differ from production only by the `/agent/**` whitelist line; the
-`InterceptorConfig` copy registers the Agent guard first and excludes
-`/agent/**` from the production browser-only interceptors. During production
-merge, copy these over the three matching files rather than adding parallel
-configuration classes.
+are not part of the standalone compilation source set. Both Shiro files register
+`agentAuth`; the `InterceptorConfig` copy only excludes `/agent/**` from the
+browser-only interceptors. Copy these over the three matching production files.
+Deploy the Web and py authentication changes together while scheduling is disabled;
+the former trusted-context protocol is not supported. Keep browser authentication
+and production auth-service implementations unchanged.
 
 For local authentication testing, activate `local-auth-mock`. It establishes a
 normal Shiro Subject automatically, so no login page or manual cookie is needed.
-Scheduled headers skip auto-login and continue through the non-Shiro Agent
-guard. The only local replacement is the external `arkAuthService` bean at
+Authorization headers skip auto-login and continue through `agentAuth`. The only local replacement is the external `arkAuthService` bean at
 `src/local-mock/java/com/epcc/arkweb/mock/ArkAuthServiceMock.java`; configure it
 with `LOCAL_USER_ID`, `LOCAL_PASSWORD`, `LOCAL_ORG_CODE`, and
 `LOCAL_AUTHORIZED_ROLE_ID`.

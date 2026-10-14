@@ -1,7 +1,7 @@
 package com.epcc.arkweb.helper;
 
 import com.epcc.arkweb.model.ShiroUser;
-import com.epcc.arkweb.web.llm.AgentAuthorizationInterceptor;
+import com.epcc.arkweb.web.llm.AgentAuthorizationFilter;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.shiro.authz.UnauthenticatedException;
@@ -26,7 +26,7 @@ public class AuthenticatedRequest {
     public String json(Map<String, ?> payload) {
         Map<String, Object> input = new LinkedHashMap<>();
         if (payload != null) input.putAll(payload);
-        Map<String, Object> scheduled = AgentAuthorizationInterceptor.currentContext();
+        Map<String, Object> scheduled = AgentAuthorizationFilter.currentContext();
         if (scheduled != null) {
             input.put("userId", scheduled.get("userId"));
             input.put("orgCode", scheduled.get("orgCode"));

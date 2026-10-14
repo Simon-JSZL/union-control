@@ -13,9 +13,10 @@ unzip union-control-source-1.3.6-source.zip
 Central 原始地址为 `https://repo.maven.apache.org/maven2/`，其余路径相同。
 阿里云同步可能延迟；Central 已发布不表示镜像或内网代理已刷新。
 
-源码包包含当前工作区的模块源码（包含未被 Git 忽略的新文件，排除已删除文件）、生产 overlay、集成说明及许可证。
-保留本地 mock 以便理解工程结构；生产集成时必须遵守 `PROJECT_OVERVIEW.md` 的排除要求。
-不包含本地 application 配置、schema.sql、src/test、构建产物或凭据，不能作为开箱即用的部署包。
+源码包包含整个仓库当前工作区中未被 Git 忽略的文件，包括未跟踪的新文件；已删除文件不打包。
+文件筛选仅使用 Git 标准忽略规则，不另设目录白名单或文件名黑名单；已跟踪但命中忽略规则的文件也不打包。
+`schema.sql`、配置、文档及其它文件只要未被忽略就会纳入。符号链接仍报错，避免读取仓库外内容。
+生产集成时必须遵守 `PROJECT_OVERVIEW.md` 的排除要求；源码归档不等于生产部署包。
 `SOURCE-MANIFEST.json` 记录基准 Git commit 和每个文件的 SHA256；有未提交内容时以文件哈希为准。
 
 ## 构建与发布

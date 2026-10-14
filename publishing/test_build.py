@@ -37,6 +37,16 @@ class BuildTest(unittest.TestCase):
             new = root / "ark-control/import-test/NewTest.java"
             new.parent.mkdir()
             new.write_text("updated test")
+            included = ["ark-control/src/main/resources/schema.sql",
+                        "ark-control/src/main/resources/application.properties",
+                        "docs/integration.md", "download.zip"]
+            for name in included:
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("include this file")
+            # Ignore rules apply even to a previously tracked file.
+            with (root / ".gitignore").open("a") as rules:
+                rules.write("README.md\n.DS_Store\n")
             (new.parent / ".env.local").write_text("do not distribute")
             (new.parent / ".DS_Store").write_text("do not distribute")
             try:
@@ -49,6 +59,8 @@ class BuildTest(unittest.TestCase):
                 entries = {name.split("/", 1)[1] for name in archive.namelist()}
                 self.assertIn("ark-control/import-test/NewTest.java", entries)
                 self.assertNotIn("ark-control/OldTest.java", entries)
+                self.assertTrue(set(included).issubset(entries))
+                self.assertNotIn("README.md", entries)
                 self.assertFalse(any(".env" in name or ".DS_Store" in name for name in entries))
 
 

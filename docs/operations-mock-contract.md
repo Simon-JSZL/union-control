@@ -20,7 +20,7 @@
 
 运行结果声明 `mock_data=true`、`coverage=partial`、`coverage_note`、`duration_unit`。毫秒是本 mock 的明确约定，不改变生产目录中原始耗时单位待确认的事实。无生产 SLA、分钟级时序或历史版本回放；不能根据合成场景评价真实机构运行质量。
 
-认证继续由 Web 的 `@AgentPermission("/assistantManager/page")` 与 `AuthenticatedRequest` 完成。CAS 与定时任务可信上下文共用这些入口，控制服务只接收可信 JSON 身份。前端或模型不应提交身份字段。mock 数据对本地已授权测试用户共享，不实现生产机构数据授权策略；生产授权范围必须由现有 Web/业务边界落实。
+认证继续由 Web 的 Shiro `agentAuth` 过滤器（统一要求 `/assistantManager/page`）与 `AuthenticatedRequest` 完成。CAS 与定时任务 Scheduled token 共用这些入口，控制服务只接收可信 JSON 身份。前端或模型不应提交身份字段。mock 数据对本地已授权测试用户共享，不实现生产机构数据授权策略；生产授权范围必须由现有 Web/业务边界落实。
 
 ## 数据依据与边界
 

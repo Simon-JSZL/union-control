@@ -3,17 +3,15 @@ package com.epcc.arkweb.web.llm;
 import com.union.control.service.ScheduledTaskService;
 import org.apache.shiro.SecurityUtils;
 import org.apache.shiro.subject.Subject;
+import org.apache.shiro.web.servlet.AdviceFilter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpHeaders;
-import org.springframework.stereotype.Component;
 import org.springframework.web.context.request.RequestAttributes;
 import org.springframework.web.context.request.RequestContextHolder;
-import org.springframework.web.method.HandlerMethod;
-import org.springframework.web.servlet.handler.HandlerInterceptorAdapter;
 
+import javax.servlet.ServletRequest;
+import javax.servlet.ServletResponse;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import java.io.IOException;
@@ -27,68 +25,38 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-/** Agent-only guard. Scheduled requests never create a Shiro Subject. */
-@Component
-public final class AgentAuthorizationInterceptor extends HandlerInterceptorAdapter {
-    public static final String TRUSTED_CONTEXT_HEADER = "X-Agent-Trusted-Context";
+/** Shiro-chain Agent guard. Scheduled credentials never log in a Subject. */
+public final class AgentAuthorizationFilter extends AdviceFilter {
+    private static final String EXECUTE_PERMISSION = "/assistantManager/page";
     private static final String AUTHORIZATION_PREFIX = "Scheduled ";
     public static final String CONTEXT_ATTRIBUTE =
-            AgentAuthorizationInterceptor.class.getName() + ".scheduledContext";
-    private static final Logger LOG = LoggerFactory.getLogger(AgentAuthorizationInterceptor.class);
+            AgentAuthorizationFilter.class.getName() + ".scheduledContext";
+    private static final Logger LOG = LoggerFactory.getLogger(AgentAuthorizationFilter.class);
 
     private final ScheduledTaskService scheduledTasks;
-    private volatile Object arkAuthService;
+    private final Object arkAuthService;
 
-    @Autowired
-    public AgentAuthorizationInterceptor(ScheduledTaskService scheduledTasks) {
+    public AgentAuthorizationFilter(ScheduledTaskService scheduledTasks, Object arkAuthService) {
         this.scheduledTasks = scheduledTasks;
-    }
-
-    /** Production supplies its existing bean; absence deliberately fails closed. */
-    @Autowired(required = false)
-    public void setArkAuthService(@Qualifier("arkAuthService") Object arkAuthService) {
         this.arkAuthService = arkAuthService;
     }
 
-    public Map<String, Object> authorize(String authorization, String permission) {
-        String token = token(authorization);
-        if (token == null) throw new IllegalArgumentException("scheduled token invalid");
-        Map<String, Object> context = context(scheduledTasks.resolveScheduledToken(token));
-        if (!hasPermission((String) context.get("roleId"),
-                (String) context.get("userId"), permission))
-            throw new SecurityException("scheduled permission denied");
-        return context;
-    }
-
     @Override
-    public boolean preHandle(HttpServletRequest request, HttpServletResponse response,
-            Object handler) {
-        if (!(handler instanceof HandlerMethod)) return true;
-        AgentPermission permission = ((HandlerMethod) handler)
-                .getMethodAnnotation(AgentPermission.class);
-        String path = request.getRequestURI().substring(request.getContextPath().length());
-        if (permission == null) {
-            if ("/agent/scheduledTaskAuthorize".equals(path))
-                return validAuthorizationRequest(request, response);
-            return deny(response, 403, "agent_permission_denied");
-        }
-
+    protected boolean preHandle(ServletRequest servletRequest, ServletResponse servletResponse) {
+        HttpServletRequest request = (HttpServletRequest) servletRequest;
+        HttpServletResponse response = (HttpServletResponse) servletResponse;
         List<String> authorization = headers(request, HttpHeaders.AUTHORIZATION);
-        List<String> trusted = headers(request, TRUSTED_CONTEXT_HEADER);
-        boolean cookie = present(request.getHeader(HttpHeaders.COOKIE));
-        if (authorization.size() > 1 || trusted.size() > 1
-                || (!authorization.isEmpty() && !trusted.isEmpty())
-                || (!trusted.isEmpty() && cookie))
+        if (authorization.size() > 1
+                || (!authorization.isEmpty() && request.getHeader(HttpHeaders.COOKIE) != null))
             return deny(response, 400, "mixed_authentication");
 
-        if (!trusted.isEmpty()) {
-            String rawToken = token(trusted.get(0));
+        if (!authorization.isEmpty()) {
+            String rawToken = token(authorization.get(0));
             if (rawToken == null) return deny(response, 401, "scheduled_auth_error");
             try {
-                Map<String, Object> context = context(
-                        scheduledTasks.resolveScheduledToken(rawToken));
+                Map<String, Object> context = context(scheduledTasks.resolveScheduledToken(rawToken));
                 if (!hasPermission((String) context.get("roleId"),
-                        (String) context.get("userId"), permission.value()))
+                        (String) context.get("userId"), EXECUTE_PERMISSION))
                     return deny(response, 403, "agent_permission_denied");
                 request.setAttribute(CONTEXT_ATTRIBUTE, context);
                 return true;
@@ -97,11 +65,9 @@ public final class AgentAuthorizationInterceptor extends HandlerInterceptorAdapt
             }
         }
 
-        // Raw scheduled credentials are accepted only by the exchange endpoint.
-        if (!authorization.isEmpty()) return deny(response, 401, "scheduled_auth_error");
         try {
             Subject subject = SecurityUtils.getSubject();
-            if (!subject.isAuthenticated() || !subject.isPermitted(permission.value()))
+            if (!subject.isAuthenticated() || !subject.isPermitted(EXECUTE_PERMISSION))
                 return deny(response, 403, "agent_permission_denied");
             return true;
         } catch (RuntimeException error) {
@@ -147,17 +113,6 @@ public final class AgentAuthorizationInterceptor extends HandlerInterceptorAdapt
         }
     }
 
-    private static boolean validAuthorizationRequest(
-            HttpServletRequest request, HttpServletResponse response) {
-        List<String> authorization = headers(request, HttpHeaders.AUTHORIZATION);
-        if (authorization.size() != 1
-                || token(authorization.get(0)) == null
-                || present(request.getHeader(TRUSTED_CONTEXT_HEADER))
-                || present(request.getHeader(HttpHeaders.COOKIE)))
-            return deny(response, 401, "scheduled_auth_error");
-        return true;
-    }
-
     private static List<String> headers(HttpServletRequest request, String name) {
         Enumeration<String> values = request.getHeaders(name);
         return values == null ? Collections.<String>emptyList() : Collections.list(values);
@@ -175,10 +130,6 @@ public final class AgentAuthorizationInterceptor extends HandlerInterceptorAdapt
 
     private static boolean identity(String value) {
         return value != null && !value.trim().isEmpty() && value.length() <= 64;
-    }
-
-    private static boolean present(String value) {
-        return value != null && !value.trim().isEmpty();
     }
 
     private static Map<String, Object> context(Map<String, Object> row) {

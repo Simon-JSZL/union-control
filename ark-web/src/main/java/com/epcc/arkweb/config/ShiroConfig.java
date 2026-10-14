@@ -1,5 +1,8 @@
 package com.epcc.arkweb.config;
 
+import com.epcc.arkweb.web.llm.AgentAuthorizationFilter;
+import com.union.control.service.ScheduledTaskService;
+
 import com.epcc.arkweb.filter.LoginFormFilter;
 import org.apache.shiro.authc.pam.FirstSuccessfulStrategy;
 import org.apache.shiro.authc.pam.ModularRealmAuthenticator;
@@ -32,7 +35,8 @@ public class ShiroConfig {
     private Filter localAuthFilter;
 
     @Bean
-    public ShiroFilterFactoryBean shiroFilterFactoryBean(SecurityManager securityManager) {
+    public ShiroFilterFactoryBean shiroFilterFactoryBean(SecurityManager securityManager,
+            ScheduledTaskService scheduledTasks, @Qualifier("arkAuthService") Object arkAuthService) {
         ShiroFilterFactoryBean factory = new ShiroFilterFactoryBean();
         factory.setSecurityManager(securityManager);
         factory.setLoginUrl("/login.html");
@@ -49,12 +53,13 @@ public class ShiroConfig {
         filterMap.put("/.ico", "anon");
         filterMap.put("/healthcheck.html", "anon");
         filterMap.put("/SSL/healthcheck.html", "anon");
-        filterMap.put("/agent/**", localAuthFilter == null ? "anon" : "localAuth,anon");
+        filterMap.put("/agent/**", localAuthFilter == null ? "agentAuth" : "localAuth,agentAuth");
         filterMap.put("/**", localAuthFilter == null ? "authc" : "localAuth,authc");
         filterMap.put("/union-op/**", "authc");
         factory.setFilterChainDefinitionMap(filterMap);
 
         Map<String, Filter> filters = new HashMap<>();
+        filters.put("agentAuth", new AgentAuthorizationFilter(scheduledTasks, arkAuthService));
         filters.put("authc", new LoginFormFilter("LOCAL"));
         if (localAuthFilter != null) filters.put("localAuth", localAuthFilter);
         factory.setFilters(filters);

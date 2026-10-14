@@ -64,8 +64,7 @@ public final class ArkAuthServiceMock {
             protected boolean preHandle(ServletRequest request, ServletResponse response) {
                 HttpServletRequest http = (HttpServletRequest) request;
                 String authorization = http.getHeader("Authorization");
-                if ((authorization != null && authorization.startsWith("Scheduled "))
-                        || http.getHeader("X-Agent-Trusted-Context") != null)
+                if (authorization != null)
                     return true;
                 if (!SecurityUtils.getSubject().isAuthenticated())
                     SecurityUtils.getSubject().login(
