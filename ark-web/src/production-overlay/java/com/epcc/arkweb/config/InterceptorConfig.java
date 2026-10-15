@@ -17,6 +17,8 @@ public class InterceptorConfig implements WebMvcConfigurer {
     @Autowired
     private CSRFInterceptor csrfInterceptor;
 
+    // 【定时任务鉴权：修改】三个浏览器拦截器均排除 /agent/**，避免无浏览器会话的 Scheduled 请求被拦截。
+    // /agent/** 的认证和权限检查由 Shiro 的 agentAuth 与 @RequiresPermissions 承担。
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(refererInterceptor).addPathPatterns("/**")

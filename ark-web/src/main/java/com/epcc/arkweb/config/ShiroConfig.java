@@ -1,6 +1,7 @@
 package com.epcc.arkweb.config;
 
 import com.epcc.arkweb.web.llm.AgentAuthorizationFilter;
+import com.epcc.arkweb.web.llm.AgentAuthorizationAdvisor;
 import com.union.control.service.ScheduledTaskService;
 
 import com.epcc.arkweb.filter.LoginFormFilter;
@@ -127,7 +128,7 @@ public class ShiroConfig {
     @Bean
     public AuthorizationAttributeSourceAdvisor authorizationAttributeSourceAdvisor(
             SecurityManager securityManager) {
-        AuthorizationAttributeSourceAdvisor advisor = new AuthorizationAttributeSourceAdvisor();
+        AuthorizationAttributeSourceAdvisor advisor = new AgentAuthorizationAdvisor();
         advisor.setSecurityManager(securityManager);
         return advisor;
     }

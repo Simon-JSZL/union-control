@@ -14,9 +14,6 @@ public class OperationsMockQueryTest {
 
     private Map<String, Object> query(String type, String request) throws Exception {
         Map<String, Object> input = json.readValue(request, Map.class);
-        input.put("userId", "mock-reader");
-        input.put("orgCode", "LOCAL");
-        input.put("roleId", "mock-role");
         Map<String, Object> result = "changes".equals(type) ? service.queryChanges(json.writeValueAsString(input))
                 : "faults".equals(type) ? service.queryFaults(json.writeValueAsString(input))
                 : service.queryBigData(json.writeValueAsString(input));
@@ -118,7 +115,7 @@ public class OperationsMockQueryTest {
     }
 
     @Test public void nativeRunningRowsKeepCountsAndDeclareMockDurationUnit() throws Exception {
-        Map response = service.queryBigData("{\"userId\":\"mock-reader\",\"interfaceName\":\"runing_cnt.bank\",\"params\":{\"orgCodeList\":[\"C_MOCK_A\"],\"startDate\":\"20260718\",\"endDate\":\"20260720\"}}");
+        Map response = service.queryBigData("{\"interfaceName\":\"runing_cnt.bank\",\"params\":{\"orgCodeList\":[\"C_MOCK_A\"],\"startDate\":\"20260718\",\"endDate\":\"20260720\"}}");
         List<Map> rows = (List<Map>) response.get("data");
         assertEquals(3, rows.size());
         assertEquals(150L, ((Number) rows.get(1).get("running_cnt.total_cnt_fail")).longValue());
@@ -214,22 +211,13 @@ public class OperationsMockQueryTest {
         assertEquals(5, items(query("metrics", "{\"interfaceName\":\"t_indicator_accessed_api_info\",\"params\":{\"snapshot_date\":\"2026-09-27\"}}")).size());
     }
 
-    @Test public void legacyToolsReuseTheSameEventsAndInstitutionDirectory() throws Exception {
-        List<Map> changes = (List<Map>) service.announceList("{\"userId\":\"mock-reader\",\"org_code\":\"C_MOCK_A\",\"planned_start_time\":\"20260921\",\"planned_start_time_end\":\"20260927\"}").get("data");
-        assertEquals(1, changes.size());
-        assertEquals("MOCK-CH-20260922-C_MOCK_A", changes.get(0).get("change_id"));
-        assertEquals(changes.get(0).get("change_id"), changes.get(0).get("announcementId"));
-        List<Map> faults = (List<Map>) service.getJiraInfo("{\"userId\":\"mock-reader\",\"orgCode\":\"C_MOCK_A\",\"startDate\":\"20260921\",\"endDate\":\"20260927\"}").get("data");
-        assertEquals(1, faults.size());
-        assertEquals(((List) changes.get(0).get("related_fault_ids")).get(0), faults.get(0).get("fault_id"));
-        List<Map> orgs = (List<Map>) service.getOrgInfo("{\"userId\":\"mock-reader\",\"orgName\":\"BOC\"}").get("data");
+    @Test public void orgLookupUsesTheInstitutionDirectory() throws Exception {
+        List<Map> orgs = (List<Map>) service.getOrgInfo("{\"orgName\":\"BOC\"}").get("data");
         assertEquals("104100000004", orgs.get(0).get("orgCode"));
-        List<Map> empty = (List<Map>) service.getJiraInfo("{\"userId\":\"mock-reader\",\"orgCode\":\"UNKNOWN\",\"startDate\":\"20260921\",\"endDate\":\"20260927\"}").get("data");
-        assertTrue(empty.isEmpty());
     }
 
     private List<Map> running(String scope, String start, String end) throws Exception {
-        return (List<Map>) service.queryBigData("{\"userId\":\"mock-reader\",\"interfaceName\":\"runing_cnt." + scope
+        return (List<Map>) service.queryBigData("{\"interfaceName\":\"runing_cnt." + scope
                 + "\",\"params\":{\"startDate\":\"" + start + "\",\"endDate\":\"" + end + "\"}}").get("data");
     }
 

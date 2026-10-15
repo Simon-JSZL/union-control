@@ -7,7 +7,7 @@ feature iteration. New requirements must comply with it before lower sections,
 existing scenario code, or tests are considered. Existing code that conflicts
 with this contract is technical debt to remove, not a precedent to copy.
 
-### Web authentication and JSON-only service boundary
+### Web authentication and existing business service contracts
 
 - `ark-web` is merged into the existing production Web application. Browser
   routes reuse its existing Shiro/CAS implementation and authorization annotations.
@@ -23,15 +23,21 @@ with this contract is technical debt to remove, not a precedent to copy.
 - `ark-control` is a trusted, independently deployed Dubbo provider. Business services must not
   read Shiro subjects, cookies, thread-local authentication, or call helpers such
   as `currentUserId()`. The module has no Shiro dependency.
-- After Web authentication succeeds, `AuthenticatedRequest` overwrites any
-  client-supplied `userId`, `orgCode`, and `roleId` with the authenticated values
-  and serializes the complete backend input as one JSON string.
-- User-facing business service methods accept that JSON string, parse and validate
-  it, then pass the parsed values to their mapper. Mapper ownership predicates
-  continue to use `userId`; the service trusts the Web boundary that supplied it.
+- Production already provides the complete browser authentication and
+  authorization flow. Scheduled-task authentication changes must be minimal and
+  confined to the `/agent/**` authentication path and its required Shiro wiring;
+  ordinary controllers must not acquire Scheduled identity-selection logic.
+- Preserve each existing business service's parameter names, types, and format.
+  Do not introduce a shared request-to-JSON wrapper such as `AuthenticatedRequest`,
+  require JSON-only service inputs, or inject `userId`, `orgCode`, and `roleId`
+  into all business requests as part of authentication work. Scheduled identity
+  fields serve authentication and authorization; they do not establish business
+  input requirements. Pass identity fields only where the specific existing
+  business contract requires them, preserving trusted identity sourcing and
+  ownership checks for those operations.
 - Background scheduler mechanics that create or consume execution credentials
-  live in `ark-control`. Backend-only scheduling state transitions may keep
-  typed internal method parameters because they are not public request inputs.
+  live in `ark-control`. Their existing method contracts remain unchanged by
+  Web authentication changes.
 
 ### One browser-to-Agent gateway
 
@@ -77,8 +83,10 @@ with this contract is technical debt to remove, not a precedent to copy.
   stored role ID, and requires `/assistantManager/page`. The response contains
   database-backed run identity and prompt, without returning a credential.
   Every subsequent tool call carries the same `Authorization: Scheduled <token>`.
-  The filter re-resolves the run and live resources on every request; scheduled
-  credentials never log in a Shiro Subject or create a user session.
+  The filter re-resolves the run and live resources on every request; the Shiro
+  permission annotation handler checks the endpoint's `@RequiresPermissions`
+  against that resource list. Scheduled credentials never log in a Shiro Subject
+  or create a user session.
 - Each business tool has one control endpoint and one authorization
   implementation. Scenario-prefixed clones are forbidden.
 
@@ -178,12 +186,19 @@ budget cancellation tests and Java silent-upstream tests.
 ### Agent authentication decision (2026-10-14)
 
 Replace the MVC Agent interceptor and method-level `AgentPermission` annotation
-with one namespace-wide Shiro filter: `/agent/** -> agentAuth`. Every Agent URL,
-including newly added URLs, requires `/assistantManager/page`. CAS requests use
-the existing authenticated Subject; Scheduled requests use the existing run token
-and database identity, without a scheduled Realm or synthetic login. Remove the
-trusted-context header and credential exchange. The authorization endpoint only
-returns the identity already checked by the filter and remains Scheduled-only.
+with a Shiro authentication filter: `/agent/** -> agentAuth`. Keep standard
+method-level `@RequiresPermissions` on every Agent endpoint; current endpoints
+require `/assistantManager/page`, and individual endpoints may declare different
+permissions. CAS requests use the existing authenticated Subject and native Shiro
+annotation checks. Scheduled requests use the existing run token and database
+identity; the filter loads live resources through `arkAuthService.queryResource`
+on each request, and the existing Shiro advisor uses that request's resource list
+to check the same method annotation (including AND/OR). Resource URLs are matched
+exactly. Only the permission annotation handler is extended; other Shiro
+annotations retain their native checks. No scheduled Realm or synthetic login is
+introduced. Remove the trusted-context header and credential exchange. The authorization endpoint only
+returns the identity checked by the filter after its method permission check
+and remains Scheduled-only.
 Control retains task/run persistence and token lifecycle; py retains the existing
 non-stream `/agent/v1/runs/scheduled` adapter and shared synchronous execution,
 specialists and tools. Browser entrypoints and CAS forwarding remain unchanged.
@@ -336,14 +351,15 @@ migrated or retained because the feature was not released.
 
 ## Security
 
-- `ark-web` authenticates browser callers before creating the JSON string passed
-  to `ark-control`; `ark-control` performs no authentication or permission
-  decision of its own, including while scheduling.
+- `ark-web` reuses production authentication and authorization before invoking
+  `ark-control` through the existing business service contracts; `ark-control`
+  performs no authentication or permission decision of its own, including while
+  scheduling. Authentication does not impose a common business payload format.
 - Scheduled-task browser routes authenticate the caller's same-origin
   `CASSESSIONID`; the controller never substitutes a synthetic browser identity.
-  Apache Shiro enforces `@RequiresPermissions("/assistantManager/page")` on every
-  CAS-protected API. The explicit `local-auth-mock` profile exercises the same
-  Filter/Realm/Subject path and mocks only the Realm's auth-service dependency;
+  Apache Shiro enforces each API's `@RequiresPermissions` using the logged-in
+  Subject; existing browser APIs require `/assistantManager/page`. The explicit
+  `local-auth-mock` profile exercises the same Filter/Realm/Subject path and mocks only the Realm's auth-service dependency;
   production continues to use its existing Realm and browser authentication chain.
 - Normal Agent, tool, history, completion, cancellation, sync, and Memory calls
   forward and validate that `CASSESSIONID`.
@@ -354,10 +370,12 @@ migrated or retained because the feature was not released.
   do not authenticate a Shiro Subject.
 - The production browser authentication filters and Realm remain unchanged. Both
   SSO and non-SSO filter-chain maps place `/agent/** -> agentAuth` before `/** -> authc`.
-  The Agent filter requires the namespace-wide permission; invalid credentials,
-  mixed authentication, unavailable Control, or unavailable role-resource lookup
-  all deny the request. `/api/**`
-  anonymity is not used for Agent traffic.
+  The Agent filter validates credentials and loads live Scheduled resources;
+  method-level `@RequiresPermissions` controls access through the existing Shiro
+  advisor. Every Agent endpoint must declare its permission, enforced by a
+  controller contract test. Invalid credentials, mixed authentication, unavailable
+  Control or role-resource lookup, and missing required permissions deny access.
+  `/api/**` anonymity is not used for Agent traffic.
 - Conversation completion and cancellation validate user/conversation/run
   ownership.
 - Memory paths must begin with `<authenticated-user>/personal/`.
@@ -392,7 +410,8 @@ Roll out in this order:
 2. Copy the three files from `ark-web/src/production-overlay/java/.../config`
    over their matching production configurations. The two Shiro files register
    the Agent filter and map
-   `/agent/** -> agentAuth` before `/** -> authc`;
+   `/agent/** -> agentAuth` before `/** -> authc`, and use `AgentAuthorizationAdvisor`
+   for the existing permission annotation advisor bean;
    `InterceptorConfig` excludes `/agent/**` from
    the browser-only Referer, session-IP, and CSRF interceptors. Deploy the guard
    using the existing `arkAuthService.queryResource` bean, then deploy the py

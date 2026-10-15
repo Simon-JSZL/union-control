@@ -1,6 +1,7 @@
 package com.epcc.arkweb.config;
 
 import com.epcc.arkweb.web.llm.AgentAuthorizationFilter;
+import com.epcc.arkweb.web.llm.AgentAuthorizationAdvisor;
 import com.union.control.service.ScheduledTaskService;
 import org.springframework.beans.factory.annotation.Qualifier;
 
@@ -40,6 +41,8 @@ public class ShiroConfig {
     @Value("${cookie.secure:false}")
     private String cookieSecure;
 
+    // 【定时任务鉴权：修改】方法新增 ScheduledTaskService 和生产 arkAuthService 两个注入参数。
+    // 新增 agentAuth 注册及 /agent/** 映射，映射必须放在 /** -> authc 之前；保留原登录配置。
     @Bean
     public ShiroFilterFactoryBean shiroFilterFactoryBean(SecurityManager securityManager,
             ScheduledTaskService scheduledTasks, @Qualifier("arkAuthService") Object arkAuthService) {
@@ -157,9 +160,11 @@ public class ShiroConfig {
         return advisorAutoProxyCreator;
     }
 
+    // 【定时任务鉴权：修改】将原 AuthorizationAttributeSourceAdvisor 替换为 AgentAuthorizationAdvisor。
+    // 仅 Scheduled 请求扩展权限检查，普通请求沿用 Shiro；SSO 与非 SSO 两套配置都需同步修改。
     @Bean
     public AuthorizationAttributeSourceAdvisor authorizationAttributeSourceAdvisor(SecurityManager securityManager){
-        AuthorizationAttributeSourceAdvisor authorizationAttributeSourceAdvisor = new AuthorizationAttributeSourceAdvisor();
+        AuthorizationAttributeSourceAdvisor authorizationAttributeSourceAdvisor = new AgentAuthorizationAdvisor();
         authorizationAttributeSourceAdvisor.setSecurityManager(securityManager);
         return authorizationAttributeSourceAdvisor;
     }

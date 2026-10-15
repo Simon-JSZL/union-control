@@ -81,20 +81,6 @@ public class RunningAnalysisMockServiceImpl implements RunningAnalysisMockServic
         return ok(operations.query("faults", operations.conditions(payload), payload));
     }
 
-    public Map<String, Object> announceList(String input) {
-        Map<String, Object> payload = request(input);
-        return ok(operations.legacyDetails("changes", requiredString(payload, "org_code"),
-                days(row("startDate", requiredString(payload, "planned_start_time"),
-                        "endDate", requiredString(payload, "planned_start_time_end")))));
-    }
-
-    public Map<String, Object> getJiraInfo(String input) {
-        Map<String, Object> payload = request(input);
-        return ok(operations.legacyDetails("faults", requiredString(payload, "orgCode"),
-                days(row("startDate", requiredString(payload, "startDate"),
-                        "endDate", requiredString(payload, "endDate")))));
-    }
-
     private List<Map<String, Object>> bankRows(Map<String, Object> params, List<String> days) {
         List<Map<String, Object>> rows = new ArrayList<>();
         for (String code : orgCodes(params.get("orgCodeList"))) rows.addAll(operations.runningRows(code, days));
@@ -166,15 +152,7 @@ public class RunningAnalysisMockServiceImpl implements RunningAnalysisMockServic
     }
 
     private Map<String, Object> request(String input) {
-        Map<String, Object> payload = AgentSupport.request(json, input);
-        AgentSupport.userId(payload);
-        return payload;
-    }
-
-    private static Map<String, Object> row(Object... values) {
-        Map<String, Object> row = new LinkedHashMap<>();
-        for (int i = 0; i < values.length; i += 2) row.put((String) values[i], values[i + 1]);
-        return row;
+        return AgentSupport.request(json, input);
     }
 
     private static Map<String, Object> ok(Object data) {

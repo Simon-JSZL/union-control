@@ -4,7 +4,9 @@ import com.union.control.service.AgentProxyService;
 import com.union.control.service.AgentResponse;
 import com.union.control.service.AgentExecutionService;
 import com.union.control.service.ConversationService;
-import com.epcc.arkweb.helper.AuthenticatedRequest;
+import com.epcc.arkweb.helper.AuthContextHolder;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.apache.shiro.authz.annotation.RequiresPermissions;
 
 import org.springframework.beans.factory.annotation.Autowired;
@@ -41,7 +43,7 @@ public class LlmController {
     private final ConversationService conversations;
     private final AgentExecutionService executions;
     private final AgentProxyService gateway;
-    private final AuthenticatedRequest request;
+    private final ObjectMapper json;
     private final String pyAppBaseUrl;
     private final RestTemplate http;
 
@@ -50,10 +52,10 @@ public class LlmController {
             ConversationService conversations,
             AgentExecutionService executions,
             AgentProxyService gateway,
-            AuthenticatedRequest request,
+            ObjectMapper json,
             @Value("${agent.py-app-base-url}") String pyAppBaseUrl,
             @Value("${AGENT_MAX_RUN_SECONDS:900}") double maxRunSeconds) {
-        this(conversations, executions, gateway, request, pyAppBaseUrl, new RestTemplate());
+        this(conversations, executions, gateway, json, pyAppBaseUrl, new RestTemplate());
         double millis = Math.ceil(maxRunSeconds * 1000);
         if (!Double.isFinite(millis) || millis < 1 || millis > Integer.MAX_VALUE)
             throw new IllegalArgumentException("AGENT_MAX_RUN_SECONDS is out of range");
@@ -67,13 +69,13 @@ public class LlmController {
             ConversationService conversations,
             AgentExecutionService executions,
             AgentProxyService gateway,
-            AuthenticatedRequest request,
+            ObjectMapper json,
             String pyAppBaseUrl,
             RestTemplate http) {
         this.conversations = conversations;
         this.executions = executions;
         this.gateway = gateway;
-        this.request = request;
+        this.json = json;
         this.pyAppBaseUrl = pyAppBaseUrl.replaceAll("/+$", "");
         this.http = http;
         this.http.setErrorHandler(new ResponseErrorHandler() {
@@ -92,7 +94,8 @@ public class LlmController {
     @ResponseBody
     public Map<String, Object> conversationList(
             @RequestParam(required = false, defaultValue = "100") int limit) {
-        return conversations.conversations(request.json("limit", limit));
+        return conversations.conversations(json.createObjectNode().put("limit", limit)
+                .put("userId", AuthContextHolder.getAuthUserDetails().getLoginName()).toString());
     }
 
     @GetMapping("/conversationDetails")
@@ -100,7 +103,8 @@ public class LlmController {
     @ResponseBody
     public Map<String, Object> conversationDetails(
             @RequestParam String conversationId) {
-        return conversations.conversation(request.json("conversationId", conversationId));
+        return conversations.conversation(json.createObjectNode().put("conversationId", conversationId)
+                .put("userId", AuthContextHolder.getAuthUserDetails().getLoginName()).toString());
     }
 
     @PostMapping("/conversationTitle")
@@ -108,7 +112,8 @@ public class LlmController {
     @ResponseBody
     public Map<String, Object> conversationTitle(
             @RequestBody Map<String, Object> payload) {
-        return conversations.rename(request.json(payload));
+        return conversations.rename(json.<ObjectNode>valueToTree(payload)
+                .put("userId", AuthContextHolder.getAuthUserDetails().getLoginName()).toString());
     }
 
     @PostMapping("/conversationDelete")
@@ -116,7 +121,8 @@ public class LlmController {
     @ResponseBody
     public Map<String, Object> conversationDelete(
             @RequestBody Map<String, Object> payload) {
-        return conversations.deleteConversation(request.json(payload));
+        return conversations.deleteConversation(json.<ObjectNode>valueToTree(payload)
+                .put("userId", AuthContextHolder.getAuthUserDetails().getLoginName()).toString());
     }
 
     @PostMapping("/executionCancel")
@@ -137,8 +143,14 @@ public class LlmController {
     public void chatMessage(
             @RequestHeader(value = HttpHeaders.COOKIE, required = false) String cookie,
             @RequestBody byte[] payload, HttpServletResponse response) {
-        byte[] clientPayload = request.clientPayload(payload);
-        Map<String, Object> claimed = executions.claimAguiRun(request.json(clientPayload));
+        ObjectNode claimPayload;
+        try {
+            claimPayload = json.readValue(payload, ObjectNode.class);
+        } catch (IOException error) {
+            throw new IllegalArgumentException("请求参数不是合法 JSON", error);
+        }
+        Map<String, Object> claimed = executions.claimAguiRun(claimPayload
+                .put("userId", AuthContextHolder.getAuthUserDetails().getLoginName()).toString());
         @SuppressWarnings("unchecked")
         Map<String, Object> execution = (Map<String, Object>) claimed.get("data");
         String conversationId = String.valueOf(execution.get("conversationId"));
@@ -151,7 +163,7 @@ public class LlmController {
                         upstreamRequest.getHeaders().setAccept(
                                 java.util.Collections.singletonList(MediaType.TEXT_EVENT_STREAM));
                         upstreamRequest.getHeaders().set(HttpHeaders.COOKIE, cookie);
-                        upstreamRequest.getBody().write(clientPayload);
+                        upstreamRequest.getBody().write(payload);
                     }, upstream -> {
                         response.setStatus(upstream.getRawStatusCode());
                         copyHeader(upstream, response, HttpHeaders.CONTENT_TYPE);
@@ -191,7 +203,7 @@ public class LlmController {
             @RequestHeader(value = HttpHeaders.COOKIE, required = false) String cookie,
             @RequestBody byte[] payload) {
         return response(gateway.sync(cookie,
-                new String(request.clientPayload(payload), StandardCharsets.UTF_8)));
+                new String(payload, StandardCharsets.UTF_8)));
     }
 
     private static ResponseEntity<String> response(AgentResponse response) {

@@ -115,39 +115,6 @@ final class OperationsMockQueries {
         return rows;
     }
 
-    List<Map<String, Object>> legacyDetails(String type, String orgCode, List<String> days) {
-        List<Map<String, Object>> rows = new ArrayList<>();
-        LocalDate start = LocalDate.parse(days.get(0), DateTimeFormatter.BASIC_ISO_DATE);
-        LocalDate end = LocalDate.parse(days.get(days.size() - 1), DateTimeFormatter.BASIC_ISO_DATE).plusDays(1);
-        for (Map<String, Object> record : records(fixture.get(type))) {
-            if (!orgCode.equals(record.get("org_code"))) continue;
-            boolean change = "changes".equals(type);
-            Object lo = record.get(change ? "planned_start" : "occurred_at");
-            Object hi = record.get(change ? "planned_end" : "recovered_at");
-            if (lo == null || hi == null) continue;
-            if (instant(lo).toInstant().isBefore(end.atStartOfDay().toInstant(java.time.ZoneOffset.ofHours(8)))
-                    && instant(hi).toInstant().isAfter(start.atStartOfDay().toInstant(java.time.ZoneOffset.ofHours(8)))) {
-                Map<String, Object> result = copy(record);
-                result.put("mock_data", true); result.put("orgCode", orgCode);
-                List<Map<String, Object>> orgs = institutions(orgCode);
-                result.put("orgName", orgs.isEmpty() ? null : orgs.get(0).get("orgName"));
-                if (change) {
-                    result.putAll(row("announcementId", record.get("change_id"), "changeTitle", first(record, "details.memo"),
-                            "plannedStartTime", lo, "plannedEndTime", hi, "status", record.get("workflow_state"),
-                            "executionEvaluation", first(record, "details.execution_description"),
-                            "impactScope", first(record, "details.impact_description")));
-                } else {
-                    result.putAll(row("issueKey", record.get("fault_id"), "faultTime", lo, "recoverTime", hi,
-                            "faultLevel", first(record, "details.level"), "status", first(record, "details.status"),
-                            "impactScope", first(record, "details.business_types"),
-                            "impactDescription", first(record, "details.impact.description"), "faultCause", first(record, "details.cause")));
-                }
-                rows.add(result);
-            }
-        }
-        return rows;
-    }
-
     Map<String, Object> query(String type, Map<String, Object> input, Map<String, Object> identity) {
         boolean changes = "changes".equals(type), faults = "faults".equals(type), details = changes || faults;
         Map<String, Object> dataset = details ? Collections.emptyMap() : map(map(fixture.get("indicators")).get(type));

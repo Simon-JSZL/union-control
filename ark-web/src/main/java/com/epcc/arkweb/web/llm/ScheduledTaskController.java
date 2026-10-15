@@ -1,6 +1,8 @@
 package com.epcc.arkweb.web.llm;
 
-import com.epcc.arkweb.helper.AuthenticatedRequest;
+import com.epcc.arkweb.helper.AuthContextHolder;
+import com.epcc.arkweb.model.ShiroUser;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.union.control.service.ScheduledTaskService;
 import com.epcc.arkweb.utils.ResultMsg;
 import com.epcc.arkweb.vo.llm.ScheduledTaskCommandVO;
@@ -25,37 +27,39 @@ public class ScheduledTaskController {
     private ScheduledTaskService scheduledTaskService;
 
     @Autowired
-    private AuthenticatedRequest request;
+    private ObjectMapper json;
 
     @RequestMapping(value = "/scheduledTaskCreate", method = RequestMethod.POST)
     @RequiresPermissions(value = "/assistantManager/page")
     @ResponseBody
     public ResultMsg create(@RequestBody ScheduledTaskCommandVO command) {
-        return response(scheduledTaskService.create(request.json(command(command))));
+        return response(scheduledTaskService.create(json.valueToTree(command(command)).toString()));
     }
 
     @RequestMapping(value = "/scheduledTaskUpdate", method = RequestMethod.POST)
     @RequiresPermissions(value = "/assistantManager/page")
     @ResponseBody
     public ResultMsg update(@RequestBody ScheduledTaskCommandVO command) {
-        return response(scheduledTaskService.update(request.json(command(command))));
+        return response(scheduledTaskService.update(json.valueToTree(command(command)).toString()));
     }
 
     @RequestMapping(value = "/scheduledTaskList", method = {RequestMethod.GET, RequestMethod.POST})
     @RequiresPermissions(value = "/assistantManager/page")
     @ResponseBody
     public ResultMsg list(ScheduledTaskQueryVO query) {
-        return response(scheduledTaskService.list(request.json(
-                "keyword", query.getKeyword(), "status", query.getStatus(),
-                "page", page(query.getPage()), "pageSize", pageSize(query.getPageSize()))));
+        return response(scheduledTaskService.list(json.createObjectNode()
+                .put("keyword", query.getKeyword()).put("status", query.getStatus())
+                .put("page", page(query.getPage())).put("pageSize", pageSize(query.getPageSize()))
+                .put("userId", AuthContextHolder.getAuthUserDetails().getLoginName()).toString()));
     }
 
     @RequestMapping(value = "/scheduledTaskDetail", method = RequestMethod.GET)
     @RequiresPermissions(value = "/assistantManager/page")
     @ResponseBody
     public ResultMsg detail(@RequestParam Long taskId) {
-        return response(scheduledTaskService.detail(request.json(
-                "taskId", positive(taskId, "taskId"))));
+        return response(scheduledTaskService.detail(json.createObjectNode()
+                .put("taskId", positive(taskId, "taskId"))
+                .put("userId", AuthContextHolder.getAuthUserDetails().getLoginName()).toString()));
     }
 
     @RequestMapping(value = "/scheduledTaskRunList", method = {RequestMethod.GET, RequestMethod.POST})
@@ -63,56 +67,63 @@ public class ScheduledTaskController {
     @ResponseBody
     public ResultMsg runList(ScheduledTaskQueryVO query) {
         query.setTaskId(positive(query.getTaskId(), "taskId"));
-        return response(scheduledTaskService.runs(request.json(
-                "taskId", query.getTaskId(), "page", page(query.getPage()),
-                "pageSize", pageSize(query.getPageSize()))));
+        return response(scheduledTaskService.runs(json.createObjectNode()
+                .put("taskId", query.getTaskId()).put("page", page(query.getPage()))
+                .put("pageSize", pageSize(query.getPageSize()))
+                .put("userId", AuthContextHolder.getAuthUserDetails().getLoginName()).toString()));
     }
 
     @RequestMapping(value = "/scheduledTaskRunDetail", method = RequestMethod.GET)
     @RequiresPermissions(value = "/assistantManager/page")
     @ResponseBody
     public ResultMsg runDetail(@RequestParam Long runId) {
-        return response(scheduledTaskService.runDetail(request.json(
-                "runId", positive(runId, "runId"))));
+        return response(scheduledTaskService.runDetail(json.createObjectNode()
+                .put("runId", positive(runId, "runId"))
+                .put("userId", AuthContextHolder.getAuthUserDetails().getLoginName()).toString()));
     }
 
     @RequestMapping(value = "/scheduledTaskUnread", method = RequestMethod.GET)
     @RequiresPermissions(value = "/assistantManager/page")
     @ResponseBody
     public ResultMsg unread() {
-        return response(scheduledTaskService.unread(request.json()));
+        return response(scheduledTaskService.unread(json.createObjectNode()
+                .put("userId", AuthContextHolder.getAuthUserDetails().getLoginName()).toString()));
     }
 
     @RequestMapping(value = "/scheduledTaskStart", method = RequestMethod.POST)
     @RequiresPermissions(value = "/assistantManager/page")
     @ResponseBody
     public ResultMsg start(@RequestBody IdCommand command) {
-        return response(scheduledTaskService.start(request.json(
-                "taskId", positive(command.getTaskId(), "taskId"))));
+        return response(scheduledTaskService.start(json.createObjectNode()
+                .put("taskId", positive(command.getTaskId(), "taskId"))
+                .put("userId", AuthContextHolder.getAuthUserDetails().getLoginName()).toString()));
     }
 
     @RequestMapping(value = "/scheduledTaskPause", method = RequestMethod.POST)
     @RequiresPermissions(value = "/assistantManager/page")
     @ResponseBody
     public ResultMsg pause(@RequestBody IdCommand command) {
-        return response(scheduledTaskService.pause(request.json(
-                "taskId", positive(command.getTaskId(), "taskId"))));
+        return response(scheduledTaskService.pause(json.createObjectNode()
+                .put("taskId", positive(command.getTaskId(), "taskId"))
+                .put("userId", AuthContextHolder.getAuthUserDetails().getLoginName()).toString()));
     }
 
     @RequestMapping(value = "/scheduledTaskDiscard", method = RequestMethod.POST)
     @RequiresPermissions(value = "/assistantManager/page")
     @ResponseBody
     public ResultMsg discard(@RequestBody IdCommand command) {
-        return response(scheduledTaskService.discard(request.json(
-                "taskId", positive(command.getTaskId(), "taskId"))));
+        return response(scheduledTaskService.discard(json.createObjectNode()
+                .put("taskId", positive(command.getTaskId(), "taskId"))
+                .put("userId", AuthContextHolder.getAuthUserDetails().getLoginName()).toString()));
     }
 
     @RequestMapping(value = "/scheduledTaskRunOpen", method = RequestMethod.POST)
     @RequiresPermissions(value = "/assistantManager/page")
     @ResponseBody
     public ResultMsg open(@RequestBody IdCommand command) {
-        return response(scheduledTaskService.open(request.json(
-                "runId", positive(command.getRunId(), "runId"))));
+        return response(scheduledTaskService.open(json.createObjectNode()
+                .put("runId", positive(command.getRunId(), "runId"))
+                .put("userId", AuthContextHolder.getAuthUserDetails().getLoginName()).toString()));
     }
 
     private static Long positive(Long value, String name) {
@@ -136,6 +147,10 @@ public class ScheduledTaskController {
         command.put("cronExpression", value.getCronExpression());
         command.put("intervalSeconds", value.getIntervalSeconds());
         command.put("timezone", value.getTimezone());
+        ShiroUser user = AuthContextHolder.getAuthUserDetails();
+        command.put("userId", user.getLoginName());
+        command.put("orgCode", user.getOrgCode());
+        command.put("roleId", user.getRoleId());
         return command;
     }
 

@@ -16,11 +16,11 @@
 | 同上 | `t_indicator_accessed_api_info` | 联动能力，21 个非分区字段，另保留快照日 |
 | 同上 | `t_indicator_operation_security_cap` | 年度能力，26 个非分区字段，另保留 year |
 
-新大数据请求为 `{"interfaceName":"…","params":{…}}`。既有 `runing_cnt.bank` / `runing_cnt.full_link` 路由、日期格式和超时策略不变。五家机构统一读取日期键控 fixture，返回原生 `running_cnt.total_cnt`、`total_cnt_fail`、`total_time_cost`、`bank_code`、`biz_type`、`ymd` 字段以及兼容的 `statDate`、`orgCode`、`orgName`、`totalTxnCnt`、`failTxnCnt`、`avgCostMs`、百分比字段。成功率与失败率按相同计数计算，保留六位小数。全链路是当前日期样本机构的汇总，耗时由累计分子除以总笔数，不能再与机构数相加。范围外及未知机构返回空数组，不临时制造数据。旧 `announceList` / `getJiraInfo` 也查询相同事件源，返回匹配的完整记录及旧字段别名，不再按请求开始日期编造事件。
+新大数据请求为 `{"interfaceName":"…","params":{…}}`。既有 `runing_cnt.bank` / `runing_cnt.full_link` 路由、日期格式和超时策略不变。五家机构统一读取日期键控 fixture，返回原生 `running_cnt.total_cnt`、`total_cnt_fail`、`total_time_cost`、`bank_code`、`biz_type`、`ymd` 字段以及兼容的 `statDate`、`orgCode`、`orgName`、`totalTxnCnt`、`failTxnCnt`、`avgCostMs`、百分比字段。成功率与失败率按相同计数计算，保留六位小数。全链路是当前日期样本机构的汇总，耗时由累计分子除以总笔数，不能再与机构数相加。范围外及未知机构返回空数组，不临时制造数据。变更和故障明细分别只通过 `queryChanges` 和 `queryFaults` 查询。
 
 运行结果声明 `mock_data=true`、`coverage=partial`、`coverage_note`、`duration_unit`。毫秒是本 mock 的明确约定，不改变生产目录中原始耗时单位待确认的事实。无生产 SLA、分钟级时序或历史版本回放；不能根据合成场景评价真实机构运行质量。
 
-认证继续由 Web 的 Shiro `agentAuth` 过滤器（统一要求 `/assistantManager/page`）与 `AuthenticatedRequest` 完成。CAS 与定时任务 Scheduled token 共用这些入口，控制服务只接收可信 JSON 身份。前端或模型不应提交身份字段。mock 数据对本地已授权测试用户共享，不实现生产机构数据授权策略；生产授权范围必须由现有 Web/业务边界落实。
+CAS 请求复用 Web 现有 Shiro 鉴权；定时任务 Scheduled token 由 `/agent/**` 的 `agentAuth` 过滤器额外校验，两者共用接口的 `@RequiresPermissions` 权限注解。运维查询按原业务 JSON 入参调用，不统一注入或要求 `userId`、`orgCode`、`roleId`；鉴权身份不作为运维查询的必填参数。mock 数据对本地已授权测试用户共享，不实现生产机构数据授权策略；生产授权范围必须由现有 Web/业务边界落实。
 
 ## 数据依据与边界
 
@@ -64,7 +64,7 @@
 - 文本在指定字段进行不区分大小写的字面子串匹配；`%`、`_` 没有通配符作用，`any/all` 按关键词组合。
 - 多个 `periods` 独立计算，`period_index` 标识输入区间；重叠日期可以出现在不同对照区间，但不混加。
 - `aggregation=period` 只累加已确认可加字段，按机构、区间及返回码分组。不跨返回码、机构或年累加，不将未知值变成 0；其余不可聚合字段为 null。all_biz 尚未确认聚合规则，返回 `unsupported_aggregation`。
-- 默认 `page_size=20`，上限 100。稳定排序追加来源编号及区间编号。游标签名绑定查询、身份、固定数据快照和页大小；跨用户、变更条件或篡改后返回 `invalid_cursor`。重启或切换 mock 实例后需从第一页重新查询。
+- 默认 `page_size=20`，上限 100。稳定排序追加来源编号及区间编号。游标签名绑定查询、固定数据快照和页大小；变更条件或篡改后返回 `invalid_cursor`。游标不承担跨用户的数据授权。重启或切换 mock 实例后需从第一页重新查询。
 - `version=mock-v1` 匹配该合成快照，其他版本返回空。样例没有版本历史，所有 `as_of` 返回 HTTP 409 `history_unavailable`，不伪造历史可见状态。
 
 响应为 `{"success":true,"data":{items,total,next_cursor,applied_query,data_updated_at,coverage,gaps,unavailable_fields,units,definitions}}`，兼容现有 py 客户端解包。`applied_query` 包含实际使用的默认条件；每条记录包含来源、版本和不可用字段。所有新 mock 查询固定 `coverage=partial`，并声明合成来源。单条文本不截断；py 仍执行完整页大小上限保护。

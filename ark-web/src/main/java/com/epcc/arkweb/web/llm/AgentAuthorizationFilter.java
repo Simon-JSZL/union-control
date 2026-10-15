@@ -23,14 +23,17 @@ import java.util.Enumeration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.UUID;
 
 /** Shiro-chain Agent guard. Scheduled credentials never log in a Subject. */
 public final class AgentAuthorizationFilter extends AdviceFilter {
-    private static final String EXECUTE_PERMISSION = "/assistantManager/page";
     private static final String AUTHORIZATION_PREFIX = "Scheduled ";
     public static final String CONTEXT_ATTRIBUTE =
             AgentAuthorizationFilter.class.getName() + ".scheduledContext";
+    private static final String PERMISSIONS_ATTRIBUTE =
+            AgentAuthorizationFilter.class.getName() + ".scheduledPermissions";
     private static final Logger LOG = LoggerFactory.getLogger(AgentAuthorizationFilter.class);
 
     private final ScheduledTaskService scheduledTasks;
@@ -55,10 +58,12 @@ public final class AgentAuthorizationFilter extends AdviceFilter {
             if (rawToken == null) return deny(response, 401, "scheduled_auth_error");
             try {
                 Map<String, Object> context = context(scheduledTasks.resolveScheduledToken(rawToken));
-                if (!hasPermission((String) context.get("roleId"),
-                        (String) context.get("userId"), EXECUTE_PERMISSION))
+                Set<String> permissions = permissions((String) context.get("roleId"),
+                        (String) context.get("userId"));
+                if (permissions == null)
                     return deny(response, 403, "agent_permission_denied");
                 request.setAttribute(CONTEXT_ATTRIBUTE, context);
+                request.setAttribute(PERMISSIONS_ATTRIBUTE, permissions);
                 return true;
             } catch (RuntimeException error) {
                 return deny(response, 401, "scheduled_auth_error");
@@ -67,7 +72,7 @@ public final class AgentAuthorizationFilter extends AdviceFilter {
 
         try {
             Subject subject = SecurityUtils.getSubject();
-            if (!subject.isAuthenticated() || !subject.isPermitted(EXECUTE_PERMISSION))
+            if (!subject.isAuthenticated())
                 return deny(response, 403, "agent_permission_denied");
             return true;
         } catch (RuntimeException error) {
@@ -83,33 +88,41 @@ public final class AgentAuthorizationFilter extends AdviceFilter {
         return context instanceof Map ? (Map<String, Object>) context : null;
     }
 
-    private boolean hasPermission(String roleId, String userName, String permission) {
-        if (!identity(roleId) || !identity(userName) || !identity(permission)) return false;
+    @SuppressWarnings("unchecked")
+    static Set<String> currentPermissions() {
+        RequestAttributes request = RequestContextHolder.getRequestAttributes();
+        Object permissions = request == null ? null
+                : request.getAttribute(PERMISSIONS_ATTRIBUTE, RequestAttributes.SCOPE_REQUEST);
+        return permissions instanceof Set ? (Set<String>) permissions : Collections.<String>emptySet();
+    }
+
+    private Set<String> permissions(String roleId, String userName) {
         Object service = arkAuthService;
-        if (service == null) return false;
+        if (service == null) return null;
         try {
             Object result = service.getClass()
                     .getMethod("queryResource", String.class, String.class, String.class)
                     .invoke(service, roleId, userName, UUID.randomUUID().toString());
             if (result == null || !Boolean.TRUE.equals(noArg(result, "isSuccess").invoke(result)))
-                return false;
+                return null;
             Object values = noArg(result, "getResult").invoke(result);
-            if (!(values instanceof Iterable)) return false;
+            if (!(values instanceof Iterable)) return null;
+            Set<String> permissions = new HashSet<>();
             for (Object value : (Iterable<?>) values) {
                 if (value == null) continue;
                 Object url = noArg(value, "getResourceUrl").invoke(value);
-                if (permission.equals(url)) return true;
+                if (url instanceof String) permissions.add((String) url);
             }
-            return false;
+            return Collections.unmodifiableSet(permissions);
         } catch (InvocationTargetException error) {
             LOG.warn("scheduled role resource lookup failed error_type={}",
                     error.getCause() == null ? error.getClass().getSimpleName()
                             : error.getCause().getClass().getSimpleName());
-            return false;
+            return null;
         } catch (Exception error) {
             LOG.warn("scheduled role resource lookup failed error_type={}",
                     error.getClass().getSimpleName());
-            return false;
+            return null;
         }
     }
 
@@ -126,10 +139,6 @@ public final class AgentAuthorizationFilter extends AdviceFilter {
 
     private static Method noArg(Object target, String name) throws NoSuchMethodException {
         return target.getClass().getMethod(name);
-    }
-
-    private static boolean identity(String value) {
-        return value != null && !value.trim().isEmpty() && value.length() <= 64;
     }
 
     private static Map<String, Object> context(Map<String, Object> row) {

@@ -38,17 +38,19 @@ The `ark-control` provider must not contain any Spring MVC controller.
 
 Production Realm and Filter implementations are unchanged. The SSO and non-SSO
 configuration copies under `ark-web/src/production-overlay/java` add
-`/agent/** -> anon` before `/** -> authc`, delegating only that namespace to the
-fail-closed Agent guard. Copy them over the matching production files; they are
+`/agent/** -> agentAuth` before `/** -> authc`, delegating only that namespace to the
+Agent guard. Copy them over the matching production files; they are
 not compiled as an additional local Shiro configuration. Browser/CAS requests still check
-the existing Subject and permission; scheduled calls enter only
-`/agent/scheduledTaskAuthorize`, and subsequent tools use `@AgentPermission`
-with a Control-backed execution context. `/api/**` is not used as a workaround.
+the existing Subject and native `@RequiresPermissions` checks. Scheduled calls
+use `/agent/scheduledTaskAuthorize` and the same tool endpoints, with the run token
+and live role resources checked on each request. `/api/**` is not used as a workaround.
 
-`ark-web` resolves the Shiro subject through `AuthContextHolder`, replaces
-any client identity fields, and serializes the backend request through
-`AuthenticatedRequest`. Every user-facing business service accepts that one JSON
-string and never reads Shiro or a cookie. All browser/internal HTTP controllers, including
+`ark-web` reuses production authentication through the existing Shiro flow.
+Business requests retain their individual service contracts; only operations
+that require ownership or stored execution identity receive those specific
+fields from `AuthContextHolder`. Scheduled identity handling stays in the Agent
+path. There is no shared identity-injecting JSON wrapper. Control services do
+not read Shiro or cookies. All browser/internal HTTP controllers, including
 `LlmController`, `AgentController` and `ScheduledTaskController`, live in
 `ark-web/src/main/java/com/epcc/arkweb/web/llm`. The scheduled controller
 uses the shared Dubbo facade directly; no scheduled-package facade or local
