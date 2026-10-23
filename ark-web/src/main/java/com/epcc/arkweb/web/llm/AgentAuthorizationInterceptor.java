@@ -3,51 +3,49 @@ package com.epcc.arkweb.web.llm;
 import com.union.control.service.ScheduledTaskService;
 import org.apache.shiro.SecurityUtils;
 import org.apache.shiro.subject.Subject;
-import org.apache.shiro.web.servlet.AdviceFilter;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.shiro.authz.AuthorizationException;
+import org.springframework.web.servlet.handler.HandlerInterceptorAdapter;
+import org.springframework.web.method.HandlerMethod;
+import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Autowired;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.JsonNode;
 import org.springframework.http.HttpHeaders;
 import org.springframework.web.context.request.RequestAttributes;
 import org.springframework.web.context.request.RequestContextHolder;
 
-import javax.servlet.ServletRequest;
-import javax.servlet.ServletResponse;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import java.io.IOException;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
 import java.time.Instant;
 import java.util.Collections;
 import java.util.Enumeration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.HashSet;
-import java.util.Set;
-import java.util.UUID;
 
-/** Shiro-chain Agent guard. Scheduled credentials never log in a Subject. */
-public final class AgentAuthorizationFilter extends AdviceFilter {
+/** Agent-only MVC guard. Scheduled credentials never log in a Subject. */
+@Component
+public final class AgentAuthorizationInterceptor extends HandlerInterceptorAdapter {
     private static final String AUTHORIZATION_PREFIX = "Scheduled ";
     public static final String CONTEXT_ATTRIBUTE =
-            AgentAuthorizationFilter.class.getName() + ".scheduledContext";
-    private static final String PERMISSIONS_ATTRIBUTE =
-            AgentAuthorizationFilter.class.getName() + ".scheduledPermissions";
-    private static final Logger LOG = LoggerFactory.getLogger(AgentAuthorizationFilter.class);
-
+            AgentAuthorizationInterceptor.class.getName() + ".scheduledContext";
     private final ScheduledTaskService scheduledTasks;
-    private final Object arkAuthService;
+    private final ObjectMapper json;
 
-    public AgentAuthorizationFilter(ScheduledTaskService scheduledTasks, Object arkAuthService) {
+    @Autowired
+    public AgentAuthorizationInterceptor(ScheduledTaskService scheduledTasks, ObjectMapper json) {
         this.scheduledTasks = scheduledTasks;
-        this.arkAuthService = arkAuthService;
+        this.json = json;
     }
 
     @Override
-    protected boolean preHandle(ServletRequest servletRequest, ServletResponse servletResponse) {
-        HttpServletRequest request = (HttpServletRequest) servletRequest;
-        HttpServletResponse response = (HttpServletResponse) servletResponse;
+    public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
+        request.removeAttribute(CONTEXT_ATTRIBUTE);
+        AgentPermission required = handler instanceof HandlerMethod
+                ? ((HandlerMethod) handler).getMethodAnnotation(AgentPermission.class) : null;
+        if (required == null || required.value().trim().isEmpty())
+            return deny(response, 403, "agent_permission_denied");
         List<String> authorization = headers(request, HttpHeaders.AUTHORIZATION);
         if (authorization.size() > 1
                 || (!authorization.isEmpty() && request.getHeader(HttpHeaders.COOKIE) != null))
@@ -57,15 +55,24 @@ public final class AgentAuthorizationFilter extends AdviceFilter {
             String rawToken = token(authorization.get(0));
             if (rawToken == null) return deny(response, 401, "scheduled_auth_error");
             try {
-                Map<String, Object> context = context(scheduledTasks.resolveScheduledToken(rawToken));
-                Set<String> permissions = permissions((String) context.get("roleId"),
-                        (String) context.get("userId"));
-                if (permissions == null)
+                Map<String, Object> row = scheduledTasks.resolveScheduledToken(rawToken);
+                Map<String, Object> context = context(row);
+                Object snapshot = row.get("permissionSnapshot");
+                if (!(snapshot instanceof String))
                     return deny(response, 403, "agent_permission_denied");
+                JsonNode permissions = json.readTree((String) snapshot);
+                if (permissions == null || !permissions.isArray())
+                    return deny(response, 403, "agent_permission_denied");
+                boolean permitted = false;
+                for (JsonNode permission : permissions) {
+                    if (!permission.isTextual())
+                        return deny(response, 403, "agent_permission_denied");
+                    if (required.value().equals(permission.textValue())) permitted = true;
+                }
+                if (!permitted) return deny(response, 403, "agent_permission_denied");
                 request.setAttribute(CONTEXT_ATTRIBUTE, context);
-                request.setAttribute(PERMISSIONS_ATTRIBUTE, permissions);
                 return true;
-            } catch (RuntimeException error) {
+            } catch (IOException | RuntimeException error) {
                 return deny(response, 401, "scheduled_auth_error");
             }
         }
@@ -74,7 +81,10 @@ public final class AgentAuthorizationFilter extends AdviceFilter {
             Subject subject = SecurityUtils.getSubject();
             if (!subject.isAuthenticated())
                 return deny(response, 403, "agent_permission_denied");
+            subject.checkPermission(required.value());
             return true;
+        } catch (AuthorizationException error) {
+            return deny(response, 403, "agent_permission_denied");
         } catch (RuntimeException error) {
             return deny(response, 401, "cas_auth_error");
         }
@@ -88,44 +98,6 @@ public final class AgentAuthorizationFilter extends AdviceFilter {
         return context instanceof Map ? (Map<String, Object>) context : null;
     }
 
-    @SuppressWarnings("unchecked")
-    static Set<String> currentPermissions() {
-        RequestAttributes request = RequestContextHolder.getRequestAttributes();
-        Object permissions = request == null ? null
-                : request.getAttribute(PERMISSIONS_ATTRIBUTE, RequestAttributes.SCOPE_REQUEST);
-        return permissions instanceof Set ? (Set<String>) permissions : Collections.<String>emptySet();
-    }
-
-    private Set<String> permissions(String roleId, String userName) {
-        Object service = arkAuthService;
-        if (service == null) return null;
-        try {
-            Object result = service.getClass()
-                    .getMethod("queryResource", String.class, String.class, String.class)
-                    .invoke(service, roleId, userName, UUID.randomUUID().toString());
-            if (result == null || !Boolean.TRUE.equals(noArg(result, "isSuccess").invoke(result)))
-                return null;
-            Object values = noArg(result, "getResult").invoke(result);
-            if (!(values instanceof Iterable)) return null;
-            Set<String> permissions = new HashSet<>();
-            for (Object value : (Iterable<?>) values) {
-                if (value == null) continue;
-                Object url = noArg(value, "getResourceUrl").invoke(value);
-                if (url instanceof String) permissions.add((String) url);
-            }
-            return Collections.unmodifiableSet(permissions);
-        } catch (InvocationTargetException error) {
-            LOG.warn("scheduled role resource lookup failed error_type={}",
-                    error.getCause() == null ? error.getClass().getSimpleName()
-                            : error.getCause().getClass().getSimpleName());
-            return null;
-        } catch (Exception error) {
-            LOG.warn("scheduled role resource lookup failed error_type={}",
-                    error.getClass().getSimpleName());
-            return null;
-        }
-    }
-
     private static List<String> headers(HttpServletRequest request, String name) {
         Enumeration<String> values = request.getHeaders(name);
         return values == null ? Collections.<String>emptyList() : Collections.list(values);
@@ -135,10 +107,6 @@ public final class AgentAuthorizationFilter extends AdviceFilter {
         if (value == null || !value.startsWith(AUTHORIZATION_PREFIX)) return null;
         String token = value.substring(AUTHORIZATION_PREFIX.length());
         return token.length() == 43 && token.matches("[A-Za-z0-9_-]{43}") ? token : null;
-    }
-
-    private static Method noArg(Object target, String name) throws NoSuchMethodException {
-        return target.getClass().getMethod(name);
     }
 
     private static Map<String, Object> context(Map<String, Object> row) {

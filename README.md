@@ -36,14 +36,17 @@ replacement is the external `arkAuthService` bean under
 Production keeps its existing Realm and filters.
 The `ark-control` provider must not contain any Spring MVC controller.
 
-Production Realm and Filter implementations are unchanged. The SSO and non-SSO
-configuration copies under `ark-web/src/production-overlay/java` add
-`/agent/** -> agentAuth` before `/** -> authc`, delegating only that namespace to the
-Agent guard. Copy them over the matching production files; they are
-not compiled as an additional local Shiro configuration. Browser/CAS requests still check
-the existing Subject and native `@RequiresPermissions` checks. Scheduled calls
-use `/agent/scheduledTaskAuthorize` and the same tool endpoints, with the run token
-and live role resources checked on each request. `/api/**` is not used as a workaround.
+Production Realm, filters and shared permission advisor remain unchanged. The two
+Shiro configuration copies under `ark-web/src/production-overlay/java` add only
+`/agent/** -> anon` before `/** -> authc`. `InterceptorConfig` registers
+`AgentAuthorizationInterceptor` for `/agent/**` and excludes that path from the
+browser Referer/session-IP interceptors. Apply these small changes to the host
+configurations; do not register another Shiro config or an Agent servlet filter.
+
+Every Agent handler declares one `@AgentPermission`. Missing annotations deny
+access. CAS calls require an authenticated Subject and its native `checkPermission`;
+Scheduled calls resolve their run token and check the saved permission snapshot.
+Ordinary browser controllers retain `@RequiresPermissions` and the original advisor.
 
 `ark-web` reuses production authentication through the existing Shiro flow.
 Business requests retain their individual service contracts; only operations
@@ -107,7 +110,9 @@ not production deployment inputs; see PROJECT_OVERVIEW.md for the integration bo
 
 Natural-language scheduled tasks use `t_m_announce_scheduled_task` and `t_m_announce_scheduled_run` and
 snapshot the authenticated CAS principal's `userId`, `orgCode`, and selected
-Ark `roleId` on create and update.
+Ark `roleId` on create and update. After the browser method permission check, Web
+saves `["/assistantManager/page"]` as the task's permission snapshot. Permissions
+and identity cannot be submitted through the browser command VO.
 The scheduler stores only the successful py-app result's `content` and
 `agentName` on the run; opening an unread run atomically creates the normal
 AG-UI conversation and messages.
@@ -115,12 +120,22 @@ Production uses its DBA-maintained schema and separately managed configuration.
 Each occurrence receives a 256-bit, short-lived token while the database stores
 only its SHA-256 hash. Control calls py `/agent/v1/runs/scheduled` with only that
 token and `{}`; py calls `/agent/scheduledTaskAuthorize`, which resolves the
-active run through Control and checks the role's real-time resources for the
-exact `/assistantManager/page` URL. The response contains a database-backed
-trusted context. Subsequent `/agent/*` tools must send that value in
-`X-Agent-Trusted-Context`; the raw `Authorization: Scheduled ...` credential is
-accepted only by the authorization endpoint. No scheduled Realm, synthetic
-Subject, or tool endpoint copy is introduced.
+active run through Control and checks the saved snapshot for the exact
+`/assistantManager/page` permission. The response contains checked identity and
+prompt only. Every subsequent tool call carries the same `Authorization: Scheduled`
+token. No credential exchange, scheduled Realm or synthetic Subject is introduced.
+Role revocation does not change saved permissions; editing a task refreshes them.
+Old tasks without a snapshot fail closed and must be saved again.
+
+This version requires one additional column in the DBA-maintained task table:
+
+```sql
+ALTER TABLE t_m_announce_scheduled_task
+    ADD COLUMN permission_snapshot TEXT COLLATE utf8mb4_bin DEFAULT NULL;
+```
+
+Add the column with scheduling disabled before deploying the new mapper and Web
+code. Do not backfill permissions for old tasks. The column can remain on rollback.
 Each user may keep at most 100 `ACTIVE` or `PAUSED` tasks.
 
 Streaming, sync, and scheduled py execution use `AGENT_MAX_RUN_SECONDS` (900

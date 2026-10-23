@@ -44,17 +44,17 @@
 
     <insert id="insertTask" parameterType="map" useGeneratedKeys="true" keyProperty="id">
         INSERT INTO t_m_announce_scheduled_task
-            (user_id,org_code,role_id,title,prompt,schedule_type,run_at,cron_expression,interval_seconds,
+            (user_id,org_code,role_id,permission_snapshot,title,prompt,schedule_type,run_at,cron_expression,interval_seconds,
              timezone,status,next_run_at,delete_flag,created_at,updated_at)
         VALUES
-            (#{userId},#{orgCode},#{roleId},#{title},#{prompt},#{scheduleType},#{runAt},#{cronExpression},
+            (#{userId},#{orgCode},#{roleId},#{permissionSnapshot},#{title},#{prompt},#{scheduleType},#{runAt},#{cronExpression},
              #{intervalSeconds},#{timezone},'ACTIVE',#{nextRunAt},1,
              UTC_TIMESTAMP(3),UTC_TIMESTAMP(3))
     </insert>
 
     <update id="updateTask" parameterType="map">
         UPDATE t_m_announce_scheduled_task
-        SET org_code=#{orgCode},role_id=#{roleId},title=#{title},prompt=#{prompt},schedule_type=#{scheduleType},run_at=#{runAt},
+        SET org_code=#{orgCode},role_id=#{roleId},permission_snapshot=#{permissionSnapshot},title=#{title},prompt=#{prompt},schedule_type=#{scheduleType},run_at=#{runAt},
             cron_expression=#{cronExpression},interval_seconds=#{intervalSeconds},timezone=#{timezone},
             next_run_at=CASE WHEN status='ACTIVE' THEN #{nextRunAt} ELSE NULL END,
             updated_at=UTC_TIMESTAMP(3)
@@ -215,7 +215,7 @@
 
     <select id="resolveScheduledToken" resultType="map">
         SELECT r.id AS runId,r.task_id AS taskId,t.user_id AS userId,t.org_code AS orgCode,
-               t.role_id AS roleId,t.prompt,t.timezone,
+               t.role_id AS roleId,t.permission_snapshot AS permissionSnapshot,t.prompt,t.timezone,
                DATE_FORMAT(r.scheduled_at,'%Y-%m-%dT%H:%i:%s.%fZ') AS scheduledAt,
                DATE_FORMAT(r.execution_token_expires_at,'%Y-%m-%dT%H:%i:%s.%fZ') AS expiresAt,
                r.execution_token_hash AS tokenHash

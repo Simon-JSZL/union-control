@@ -9,7 +9,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.apache.shiro.authz.AuthorizationException;
-import org.apache.shiro.authz.annotation.RequiresPermissions;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -45,14 +44,14 @@ public class AgentController {
         this.json = json;
     }
 
-    /** Returns the Scheduled identity already validated by the Shiro Agent filter. */
-    @RequiresPermissions(value = "/assistantManager/page")
+    /** Returns the Scheduled identity already validated by the Agent interceptor. */
+    @AgentPermission(value = "/assistantManager/page")
     @PostMapping("/scheduledTaskAuthorize")
     public ResponseEntity<Map<String, Object>> scheduledTaskAuthorize(
             @RequestBody(required = false) Object payload) {
         if (payload != null && (!(payload instanceof Map) || !((Map<?, ?>) payload).isEmpty()))
             return unauthorized();
-        Map<String, Object> context = AgentAuthorizationFilter.currentContext();
+        Map<String, Object> context = AgentAuthorizationInterceptor.currentContext();
         if (context == null) return unauthorized();
         return ResponseEntity.ok().header(HttpHeaders.CACHE_CONTROL, "no-store")
                 .body(success(context));
@@ -71,83 +70,83 @@ public class AgentController {
         return body;
     }
 
-    @RequiresPermissions(value = "/assistantManager/page")
+    @AgentPermission(value = "/assistantManager/page")
     @PostMapping("/getConversationMessages")
     public Map<String, Object> messages(
             @RequestBody Map<String, Object> payload) {
         return conversations.conversationMessages(json.<ObjectNode>valueToTree(payload).put("userId", userId()).toString());
     }
 
-    @RequiresPermissions(value = "/assistantManager/page")
+    @AgentPermission(value = "/assistantManager/page")
     @PostMapping("/completeRun")
     public Map<String, Object> completeRun(
             @RequestBody Map<String, Object> payload) {
         return executions.completeRun(json.<ObjectNode>valueToTree(payload).put("userId", userId()).toString());
     }
 
-    @RequiresPermissions(value = "/assistantManager/page")
+    @AgentPermission(value = "/assistantManager/page")
     @PostMapping("/memoryStore/read")
     public Map<String, Object> memoryRead(
             @RequestBody Map<String, Object> payload) {
         return memoryStore.memoryRead(json.<ObjectNode>valueToTree(payload).put("userId", userId()).toString());
     }
 
-    @RequiresPermissions(value = "/assistantManager/page")
+    @AgentPermission(value = "/assistantManager/page")
     @PostMapping("/memoryStore/list")
     public Map<String, Object> memoryList(
             @RequestBody Map<String, Object> payload) {
         return memoryStore.memoryList(json.<ObjectNode>valueToTree(payload).put("userId", userId()).toString());
     }
 
-    @RequiresPermissions(value = "/assistantManager/page")
+    @AgentPermission(value = "/assistantManager/page")
     @PostMapping("/memoryStore/operation")
     public Map<String, Object> memoryOperation(
             @RequestBody Map<String, Object> payload) {
         return memoryStore.memoryOperation(json.<ObjectNode>valueToTree(payload).put("userId", userId()).toString());
     }
 
-    @RequiresPermissions(value = "/assistantManager/page")
+    @AgentPermission(value = "/assistantManager/page")
     @PostMapping("/memoryStore/write")
     public Map<String, Object> memoryWrite(
             @RequestBody Map<String, Object> payload) {
         return memoryStore.memoryWrite(json.<ObjectNode>valueToTree(payload).put("userId", userId()).toString());
     }
 
-    @RequiresPermissions(value = "/assistantManager/page")
+    @AgentPermission(value = "/assistantManager/page")
     @PostMapping("/memoryStore/delete")
     public Map<String, Object> memoryDelete(
             @RequestBody Map<String, Object> payload) {
         return memoryStore.memoryDelete(json.<ObjectNode>valueToTree(payload).put("userId", userId()).toString());
     }
 
-    @RequiresPermissions(value = "/assistantManager/page")
+    @AgentPermission(value = "/assistantManager/page")
     @PostMapping("/memoryStore/search")
     public Map<String, Object> memorySearch(
             @RequestBody Map<String, Object> payload) {
         return memoryStore.memorySearch(json.<ObjectNode>valueToTree(payload).put("userId", userId()).toString());
     }
 
-    @RequiresPermissions(value = "/assistantManager/page")
+    @AgentPermission(value = "/assistantManager/page")
     @PostMapping("/getOrgInfo")
     public Map<String, Object> getOrgInfo(
             @RequestBody Map<String, Object> payload) {
         return runningAnalysis.getOrgInfo(json.valueToTree(payload).toString());
     }
 
-    @RequiresPermissions(value = "/assistantManager/page")
+    @AgentPermission(value = "/assistantManager/page")
     @PostMapping("/queryBigData")
     public Map<String, Object> queryBigData(
             @RequestBody Map<String, Object> payload) {
         return runningAnalysis.queryBigData(json.valueToTree(payload).toString());
     }
 
-    @RequiresPermissions(value = "/assistantManager/page")
+    @AgentPermission(value = "/assistantManager/page")
     @PostMapping("/queryChanges")
     public Map<String, Object> queryChanges(@RequestBody Map<String, Object> payload) {
         return runningAnalysis.queryChanges(json.valueToTree(payload).toString());
     }
 
-    @RequiresPermissions(value = "/assistantManager/page")
+    @AgentPermission(value = "/assistantManager/page")
     @PostMapping("/queryFaults")
     public Map<String, Object> queryFaults(@RequestBody Map<String, Object> payload) {
         return runningAnalysis.queryFaults(json.valueToTree(payload).toString());
@@ -155,7 +154,7 @@ public class AgentController {
 
     // Only owner-scoped Agent APIs need an identity in their business input.
     private static String userId() {
-        Map<String, Object> scheduled = AgentAuthorizationFilter.currentContext();
+        Map<String, Object> scheduled = AgentAuthorizationInterceptor.currentContext();
         return scheduled == null ? AuthContextHolder.getAuthUserDetails().getLoginName()
                 : (String) scheduled.get("userId");
     }

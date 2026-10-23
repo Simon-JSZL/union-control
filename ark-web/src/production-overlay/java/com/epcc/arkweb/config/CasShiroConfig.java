@@ -1,10 +1,5 @@
 package com.epcc.arkweb.config;
 
-import com.epcc.arkweb.web.llm.AgentAuthorizationFilter;
-import com.epcc.arkweb.web.llm.AgentAuthorizationAdvisor;
-import com.union.control.service.ScheduledTaskService;
-import org.springframework.beans.factory.annotation.Qualifier;
-
 import com.epcc.arkweb.service.redis.ShiroSessionRedisDao;
 import com.epcc.arkweb.service.shirosession.ShiroSessionListener;
 import com.epcc.baseservice.dal.service.UnifyRedisService;
@@ -133,18 +128,14 @@ public class CasShiroConfig {
         return casFilter;
     }
 
-    // 【定时任务鉴权：修改】方法新增 ScheduledTaskService 和生产 arkAuthService 两个注入参数。
-    // 新增 agentAuth 注册及 /agent/** 映射，映射必须放在 /** -> authc 之前；保留原登录配置。
     @Bean(name = "shiroFilter")
-    public ShiroFilterFactoryBean shiroFilter(SecurityManager securityManager, CasFilter casFilter,
-            ScheduledTaskService scheduledTasks, @Qualifier("arkAuthService") Object arkAuthService){
+    public ShiroFilterFactoryBean shiroFilter(SecurityManager securityManager, CasFilter casFilter){
         ShiroFilterFactoryBean shiroFilterFactoryBean = new ShiroFilterFactoryBean();
         shiroFilterFactoryBean.setSecurityManager(securityManager);
         shiroFilterFactoryBean.setLoginUrl(loginUrl);
         shiroFilterFactoryBean.setUnauthorizedUrl(unauthorizedUrl);
 
         Map<String,Filter> filters = new HashMap<>();
-        filters.put("agentAuth", new AgentAuthorizationFilter(scheduledTasks, arkAuthService));
         filters.put("casFilter",casFilter);
         shiroFilterFactoryBean.setFilters(filters);
         //拦截器.
@@ -156,12 +147,12 @@ public class CasShiroConfig {
         filterMap.put("/script/**", "anon");
         filterMap.put("/plugins/**", "anon");
         filterMap.put("/api/**", "anon");
-        filterMap.put("/agent/**", "agentAuth");
         filterMap.put("/lhyw/kickidc", "anon");
         filterMap.put("/lhyw/recoverIdc", "anon");
         filterMap.put("/lhyw/kickidc/healthcheck", "anon");
         filterMap.put("/healthcheck.html", "anon");
         filterMap.put("/SSL/healthcheck.html", "anon");
+        filterMap.put("/agent/**", "anon");
         filterMap.put("/**","authc");
 
         shiroFilterFactoryBean.setFilterChainDefinitionMap(filterMap);
@@ -181,11 +172,9 @@ public class CasShiroConfig {
         return advisorAutoProxyCreator;
     }
 
-    // 【定时任务鉴权：修改】将原 AuthorizationAttributeSourceAdvisor 替换为 AgentAuthorizationAdvisor。
-    // 仅 Scheduled 请求扩展权限检查，普通请求沿用 Shiro；SSO 与非 SSO 两套配置都需同步修改。
     @Bean
     public AuthorizationAttributeSourceAdvisor authorizationAttributeSourceAdvisor(SecurityManager securityManager){
-        AuthorizationAttributeSourceAdvisor authorizationAttributeSourceAdvisor = new AgentAuthorizationAdvisor();
+        AuthorizationAttributeSourceAdvisor authorizationAttributeSourceAdvisor = new AuthorizationAttributeSourceAdvisor();
         authorizationAttributeSourceAdvisor.setSecurityManager(securityManager);
         return authorizationAttributeSourceAdvisor;
     }

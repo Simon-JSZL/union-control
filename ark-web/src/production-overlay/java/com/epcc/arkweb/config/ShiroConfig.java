@@ -1,10 +1,5 @@
 package com.epcc.arkweb.config;
 
-import com.epcc.arkweb.web.llm.AgentAuthorizationFilter;
-import com.epcc.arkweb.web.llm.AgentAuthorizationAdvisor;
-import com.union.control.service.ScheduledTaskService;
-import org.springframework.beans.factory.annotation.Qualifier;
-
 import com.epcc.arkweb.filter.LoginFormFilter;
 import com.epcc.arkweb.service.redis.ShiroSessionRedisDao;
 import com.epcc.arkweb.service.shirosession.ShiroSessionListener;
@@ -41,11 +36,8 @@ public class ShiroConfig {
     @Value("${cookie.secure:false}")
     private String cookieSecure;
 
-    // 【定时任务鉴权：修改】方法新增 ScheduledTaskService 和生产 arkAuthService 两个注入参数。
-    // 新增 agentAuth 注册及 /agent/** 映射，映射必须放在 /** -> authc 之前；保留原登录配置。
     @Bean
-    public ShiroFilterFactoryBean shiroFilterFactoryBean(SecurityManager securityManager,
-            ScheduledTaskService scheduledTasks, @Qualifier("arkAuthService") Object arkAuthService) {
+    public ShiroFilterFactoryBean shiroFilterFactoryBean(SecurityManager securityManager) {
         ShiroFilterFactoryBean shiroFilterFactoryBean = new ShiroFilterFactoryBean();
         shiroFilterFactoryBean.setSecurityManager(securityManager);
         //拦截器.
@@ -61,12 +53,12 @@ public class ShiroConfig {
         filterMap.put("/.ico", "anon");
         filterMap.put("/healthcheck.html", "anon");
         filterMap.put("/SSL/healthcheck.html", "anon");
-        filterMap.put("/agent/**", "agentAuth");
         //配置退出 过滤器,其中的具体的退出代码Shiro已经替我们实现了
 //        filterMap.put("/loginOut.do", "logout");
 
         //<!-- 过滤链定义，从上向下顺序执行，一般将/**放在最为下边 -->:这是一个坑呢，一不小心代码就不好使了;
         //<!-- authc:所有url都必须认证通过才可以访问; anon:所有url都都可以匿名访问-->
+        filterMap.put("/agent/**", "anon");
         filterMap.put("/**", "authc");
         filterMap.put("/union-op/**", "authc");
         // 如果不设置默认会自动寻找Web工程根目录下的"/login.jsp"页面
@@ -78,7 +70,6 @@ public class ShiroConfig {
         shiroFilterFactoryBean.setSuccessUrl("/index.html");
         Map<String, Filter> filters = new HashMap<>();
         LoginFormFilter loginFormFilter = new LoginFormFilter(propFlag);
-        filters.put("agentAuth", new AgentAuthorizationFilter(scheduledTasks, arkAuthService));
         filters.put("authc",loginFormFilter);
         shiroFilterFactoryBean.setFilters(filters);
 
@@ -160,11 +151,9 @@ public class ShiroConfig {
         return advisorAutoProxyCreator;
     }
 
-    // 【定时任务鉴权：修改】将原 AuthorizationAttributeSourceAdvisor 替换为 AgentAuthorizationAdvisor。
-    // 仅 Scheduled 请求扩展权限检查，普通请求沿用 Shiro；SSO 与非 SSO 两套配置都需同步修改。
     @Bean
     public AuthorizationAttributeSourceAdvisor authorizationAttributeSourceAdvisor(SecurityManager securityManager){
-        AuthorizationAttributeSourceAdvisor authorizationAttributeSourceAdvisor = new AgentAuthorizationAdvisor();
+        AuthorizationAttributeSourceAdvisor authorizationAttributeSourceAdvisor = new AuthorizationAttributeSourceAdvisor();
         authorizationAttributeSourceAdvisor.setSecurityManager(securityManager);
         return authorizationAttributeSourceAdvisor;
     }

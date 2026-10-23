@@ -15,11 +15,10 @@ with this contract is technical debt to remove, not a precedent to copy.
   and `LoginFormFilter` names and lifecycle; only the
   external `arkAuthService` bean is replaced under `src/local-mock/java`.
   The production-overlay copies of both filter-chain configurations delegate
-  only `/agent/**` to the `agentAuth` Shiro filter before their catch-all `authc`.
+  only `/agent/**` to the Agent MVC interceptor using `anon` before their catch-all `authc`.
   They replace the matching production files during integration; runtime source
   must not define another Realm, Shiro configuration, or CAS token. The
-  Agent-only `AgentAuthorizationFilter` is registered inside the existing Shiro
-  chain, never as a global servlet filter.
+  Agent-only `AgentAuthorizationInterceptor` is registered only for `/agent/**`.
 - `ark-control` is a trusted, independently deployed Dubbo provider. Business services must not
   read Shiro subjects, cookies, thread-local authentication, or call helpers such
   as `currentUserId()`. The module has no Shiro dependency.
@@ -79,13 +78,11 @@ with this contract is technical debt to remove, not a precedent to copy.
 - Scheduled traffic carries only `Authorization: Scheduled <token>`. It enters
   py through `/agent/v1/runs/scheduled`, then calls
   `/agent/scheduledTaskAuthorize`. Web resolves the active run through Control,
-  calls the production `arkAuthService.queryResource` bean with the
-  stored role ID, and requires `/assistantManager/page`. The response contains
+  checks the saved permission snapshot, and requires `/assistantManager/page`. The response contains
   database-backed run identity and prompt, without returning a credential.
   Every subsequent tool call carries the same `Authorization: Scheduled <token>`.
-  The filter re-resolves the run and live resources on every request; the Shiro
-  permission annotation handler checks the endpoint's `@RequiresPermissions`
-  against that resource list. Scheduled credentials never log in a Shiro Subject
+  The interceptor re-resolves the run on every request and checks the endpoint's
+  `@AgentPermission` against the saved snapshot. Scheduled credentials never log in a Shiro Subject
   or create a user session.
 - Each business tool has one control endpoint and one authorization
   implementation. Scenario-prefixed clones are forbidden.
@@ -106,7 +103,7 @@ Java sources follow the production project's responsibility-based packages:
 MyBatis interfaces, application services, and timer entrypoints live in
 `ark-control`; the Agent-only guard stays beside `AgentController`. Production
 browser filters, Realm, and identity model are reused as-is. The existing Shiro
-configurations register the Agent-only filter for `/agent/**`.
+configurations delegate `/agent/**` to the Agent-only MVC interceptor.
 Scheduled-task code must not introduce a parallel domain package containing its
 own mapper, service, Web facade, production-authentication wrapper, or local mock.
 
@@ -183,25 +180,31 @@ and token-expiry margins above that duration (defaults 930 and 960 seconds).
 The F05 deadline gap is covered by sync/scheduled router, root, and combined
 budget cancellation tests and Java silent-upstream tests.
 
-### Agent authentication decision (2026-10-14)
+### Agent authentication decision (2026-10-15)
 
-Replace the MVC Agent interceptor and method-level `AgentPermission` annotation
-with a Shiro authentication filter: `/agent/** -> agentAuth`. Keep standard
-method-level `@RequiresPermissions` on every Agent endpoint; current endpoints
-require `/assistantManager/page`, and individual endpoints may declare different
-permissions. CAS requests use the existing authenticated Subject and native Shiro
-annotation checks. Scheduled requests use the existing run token and database
-identity; the filter loads live resources through `arkAuthService.queryResource`
-on each request, and the existing Shiro advisor uses that request's resource list
-to check the same method annotation (including AND/OR). Resource URLs are matched
-exactly. Only the permission annotation handler is extended; other Shiro
-annotations retain their native checks. No scheduled Realm or synthetic login is
-introduced. Remove the trusted-context header and credential exchange. The authorization endpoint only
-returns the identity checked by the filter after its method permission check
-and remains Scheduled-only.
-Control retains task/run persistence and token lifecycle; py retains the existing
-non-stream `/agent/v1/runs/scheduled` adapter and shared synchronous execution,
-specialists and tools. Browser entrypoints and CAS forwarding remain unchanged.
+The production shared Shiro advisor remains unchanged. Both Shiro chains map
+`/agent/** -> anon` before the catch-all; this delegates authentication and
+permission checks to one MVC `AgentAuthorizationInterceptor`, not anonymous access.
+Every Agent handler must declare a single `@AgentPermission`; missing annotations
+and non-handler requests are denied. CAS requests require the existing authenticated
+Subject and call its native `checkPermission`. Scheduled requests validate the
+single-occurrence token through Control and check the exact permission against the
+stored task snapshot. They never log in a Subject or create a session.
+
+Task create/update checks `/assistantManager/page` against the logged-in Subject
+and saves that permission as a JSON array in `permission_snapshot`. The browser
+cannot supply identity or permissions. Control persists the snapshot without making
+an authorization decision. Existing tasks with no snapshot cannot authorize tools
+until saved again. Later role revocation does not revoke saved tasks; editing
+refreshes the snapshot, deleting invalidates their active execution tokens.
+Pausing prevents future scheduling but does not terminate an already active run.
+
+Remove the Agent Shiro filter and custom advisor. Only the Agent namespace uses the
+new annotation; ordinary controllers retain native `@RequiresPermissions`.
+Domain persistence remains in the existing task/run tables and services. No new
+specialist, tool, model endpoint, or execution path is introduced: py retains the
+shared scheduled non-stream adapter and all CAS cookies are forwarded unchanged.
+The authorization endpoint returns checked identity only, never the snapshot or token.
 
 ## Purpose
 
@@ -223,7 +226,7 @@ SSE proxying.
 - Browser APIs remain under `/llm/**`
 - Internal py-app APIs remain under `/agent/**`; they must not move under the
   production-anonymous `/api/**` namespace. Interactive calls validate the CAS
-  session and scheduled calls use the Agent authentication filter.
+  session and scheduled calls use the Agent authentication interceptor.
 
 Only GET and POST endpoints are used in production.
 
@@ -321,10 +324,9 @@ The scheduled-task flow is:
    Control loads the prompt, owner, role, timezone, and effective occurrence
    time, atomically issues a token, and calls py's scheduled execution endpoint
    with `{}`. Control stores only the token hash and makes no permission
-   decision. Web's `/agent/scheduledTaskAuthorize` resolves the run, calls the
-   production `arkAuthService.queryResource` bean, and requires the
-   exact `/assistantManager/page` resource. Agent tools carry the same Scheduled
-   token through `agentAuth`; browser/CAS
+   decision. Web's `/agent/scheduledTaskAuthorize` resolves the run and checks the
+   saved snapshot for the exact `/assistantManager/page` permission. Agent tools
+   carry the same Scheduled token through the Agent interceptor; browser/CAS
    requests continue to use the production Shiro Subject.
 3. Every terminal run is unread until opened. Successful py-app content is
    stored as bounded JSON; failed runs retain a bounded, structured, user-safe
@@ -366,16 +368,13 @@ migrated or retained because the feature was not released.
 - Scheduled execution has no browser session and must not derive or fabricate a
   CAS Cookie from the task owner. Its token is checked against the active
   RUNNING occurrence in Control; Agent tools use the same Scheduled token,
-  recheck live resources, and
+  check saved permissions, and
   do not authenticate a Shiro Subject.
-- The production browser authentication filters and Realm remain unchanged. Both
-  SSO and non-SSO filter-chain maps place `/agent/** -> agentAuth` before `/** -> authc`.
-  The Agent filter validates credentials and loads live Scheduled resources;
-  method-level `@RequiresPermissions` controls access through the existing Shiro
-  advisor. Every Agent endpoint must declare its permission, enforced by a
-  controller contract test. Invalid credentials, mixed authentication, unavailable
-  Control or role-resource lookup, and missing required permissions deny access.
-  `/api/**` anonymity is not used for Agent traffic.
+- The production browser authentication filters, Realm and shared advisor remain
+  unchanged. Both Shiro maps place `/agent/** -> anon` before `/** -> authc`.
+  The Agent MVC interceptor authenticates every Agent handler and enforces its
+  single `@AgentPermission`. Missing annotations, invalid/mixed credentials,
+  unavailable Control and absent permissions fail closed. `/api/**` is not used.
 - Conversation completion and cancellation validate user/conversation/run
   ownership.
 - Memory paths must begin with `<authenticated-user>/personal/`.
@@ -386,7 +385,7 @@ migrated or retained because the feature was not released.
 
 - `SCHEDULED_TASK_ENABLED` controls claiming and execution in `ark-control` and
   remains disabled until the database schema, dedicated Agent
-  authorization endpoint, production role-resource adapter, and py scheduled
+  authorization endpoint, permission snapshot column, and py scheduled
   adapter are deployed and cross-service security checks are complete.
 - Worker tuning: `SCHEDULED_TASK_WORKER_THREADS` and
   `SCHEDULED_TASK_MAX_RUN_SECONDS`.
@@ -407,15 +406,13 @@ Roll out in this order:
    the DBA. Production already maintains the correct schema separately; the
    local `ark-control/src/main/resources/schema.sql` is a simulation reference,
    not a required production deployment input.
-2. Copy the three files from `ark-web/src/production-overlay/java/.../config`
-   over their matching production configurations. The two Shiro files register
-   the Agent filter and map
-   `/agent/** -> agentAuth` before `/** -> authc`, and use `AgentAuthorizationAdvisor`
-   for the existing permission annotation advisor bean;
-   `InterceptorConfig` excludes `/agent/**` from
-   the browser-only Referer, session-IP, and CSRF interceptors. Deploy the guard
-   using the existing `arkAuthService.queryResource` bean, then deploy the py
-   scheduled adapter while scheduling remains disabled.
+2. Apply the minimal changes from the three production-overlay configs: map
+   `/agent/** -> anon` before `/** -> authc`; register the Agent MVC interceptor
+   only for `/agent/**`, excluding that path from Referer and session-IP checks.
+   Keep the shared Shiro advisor unchanged. Add nullable `permission_snapshot`
+   TEXT to the production task table before deploying the updated mapper; NULL
+   grants no permission. Existing tasks must be saved again before execution.
+   Deploy the Agent guard and py scheduled adapter with scheduling disabled.
 3. Deploy the web UI and verify draft, create, update, list, pause/start, and result
    APIs while no background run can be claimed.
 4. Enable scheduling on control only after the cross-service contract and

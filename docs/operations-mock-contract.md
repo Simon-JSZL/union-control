@@ -20,7 +20,7 @@
 
 运行结果声明 `mock_data=true`、`coverage=partial`、`coverage_note`、`duration_unit`。毫秒是本 mock 的明确约定，不改变生产目录中原始耗时单位待确认的事实。无生产 SLA、分钟级时序或历史版本回放；不能根据合成场景评价真实机构运行质量。
 
-CAS 请求复用 Web 现有 Shiro 鉴权；定时任务 Scheduled token 由 `/agent/**` 的 `agentAuth` 过滤器额外校验，两者共用接口的 `@RequiresPermissions` 权限注解。运维查询按原业务 JSON 入参调用，不统一注入或要求 `userId`、`orgCode`、`roleId`；鉴权身份不作为运维查询的必填参数。mock 数据对本地已授权测试用户共享，不实现生产机构数据授权策略；生产授权范围必须由现有 Web/业务边界落实。
+CAS 请求复用 Web 现有 Shiro 鉴权；Agent 请求统一由 `/agent/**` 的 MVC 拦截器检查 `@AgentPermission`：CAS 使用原 Subject 权限，Scheduled 校验运行 token 和任务保存的权限快照。运维查询按原业务 JSON 入参调用，不统一注入或要求 `userId`、`orgCode`、`roleId`；鉴权身份不作为运维查询的必填参数。mock 数据对本地已授权测试用户共享，不实现生产机构数据授权策略；生产授权范围必须由现有 Web/业务边界落实。
 
 ## 数据依据与边界
 

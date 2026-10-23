@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseBody;
 
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -147,6 +148,7 @@ public class ScheduledTaskController {
         command.put("cronExpression", value.getCronExpression());
         command.put("intervalSeconds", value.getIntervalSeconds());
         command.put("timezone", value.getTimezone());
+        command.put("permissions", Collections.singletonList("/assistantManager/page"));
         ShiroUser user = AuthContextHolder.getAuthUserDetails();
         command.put("userId", user.getLoginName());
         command.put("orgCode", user.getOrgCode());

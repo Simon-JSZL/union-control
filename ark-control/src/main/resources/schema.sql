@@ -92,6 +92,7 @@ CREATE TABLE IF NOT EXISTS `t_m_announce_scheduled_task` (
   `user_id` VARCHAR(64) COLLATE utf8mb4_bin NOT NULL COMMENT '任务所属用户标识',
   `org_code` VARCHAR(64) COLLATE utf8mb4_bin NOT NULL COMMENT '任务创建时的机构快照',
   `role_id` VARCHAR(64) COLLATE utf8mb4_bin NOT NULL COMMENT '任务创建或编辑时的Ark系统角色快照',
+  `permission_snapshot` TEXT COLLATE utf8mb4_bin DEFAULT NULL COMMENT 'Web保存时校验的接口权限JSON数组；空值不授权',
   `title` VARCHAR(255) NOT NULL COMMENT '任务标题',
   `prompt` TEXT NOT NULL COMMENT '每次执行使用的自然语言任务提示',
   `schedule_type` VARCHAR(16) COLLATE utf8mb4_bin NOT NULL COMMENT '调度类型：ONCE、CRON、INTERVAL',

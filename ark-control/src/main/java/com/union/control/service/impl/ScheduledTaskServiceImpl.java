@@ -327,6 +327,14 @@ public class ScheduledTaskServiceImpl implements ScheduledTaskService {
         task.put("intervalSeconds", values.intervalSeconds);
         task.put("timezone", zone.getId());
         task.put("nextRunAt", databaseDateTime(values.nextRunAt));
+        Object permissions = payload.get("permissions");
+        if (!(permissions instanceof List) || ((List<?>) permissions).isEmpty())
+            throw new IllegalArgumentException("permissions 非法");
+        for (Object permission : (List<?>) permissions) {
+            if (!(permission instanceof String) || ((String) permission).trim().isEmpty())
+                throw new IllegalArgumentException("permissions 非法");
+        }
+        task.put("permissionSnapshot", json.valueToTree(permissions).toString());
         return task;
     }
 
