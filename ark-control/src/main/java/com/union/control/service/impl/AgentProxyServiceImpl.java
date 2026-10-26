@@ -36,7 +36,7 @@ public class AgentProxyServiceImpl implements AgentProxyService {
             ObjectMapper json,
             @Value("${AGENT_MAX_RUN_SECONDS:900}") double maxRunSeconds) {
         this(pyAppBaseUrl, new RestTemplate(), json);
-        double millis = Math.ceil(maxRunSeconds * 1000);
+        double millis = Math.ceil(maxRunSeconds * 1000.0d);
         if (!Double.isFinite(millis) || millis < 1 || millis > Integer.MAX_VALUE)
             throw new IllegalArgumentException("AGENT_MAX_RUN_SECONDS is out of range");
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
@@ -58,7 +58,9 @@ public class AgentProxyServiceImpl implements AgentProxyService {
             }
 
             @Override
-            public void handleError(ClientHttpResponse response) {}
+            public void handleError(ClientHttpResponse response) {
+                // Pass upstream status and JSON to the caller, including 4xx and 5xx responses.
+            }
         };
         this.http.setErrorHandler(passThroughErrors);
     }

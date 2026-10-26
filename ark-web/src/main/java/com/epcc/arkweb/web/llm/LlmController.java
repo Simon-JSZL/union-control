@@ -40,6 +40,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @Controller
 @RequestMapping(value = {"llm", "union-op/llm"})
 public class LlmController {
+    private static final String USER_ID = "userId";
+    private static final String CONVERSATION_ID = "conversationId";
+
     private final ConversationService conversations;
     private final AgentExecutionService executions;
     private final AgentProxyService gateway;
@@ -56,7 +59,7 @@ public class LlmController {
             @Value("${agent.py-app-base-url}") String pyAppBaseUrl,
             @Value("${AGENT_MAX_RUN_SECONDS:900}") double maxRunSeconds) {
         this(conversations, executions, gateway, json, pyAppBaseUrl, new RestTemplate());
-        double millis = Math.ceil(maxRunSeconds * 1000);
+        double millis = Math.ceil(maxRunSeconds * 1000.0d);
         if (!Double.isFinite(millis) || millis < 1 || millis > Integer.MAX_VALUE)
             throw new IllegalArgumentException("AGENT_MAX_RUN_SECONDS is out of range");
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
@@ -85,7 +88,9 @@ public class LlmController {
             }
 
             @Override
-            public void handleError(ClientHttpResponse response) {}
+            public void handleError(ClientHttpResponse response) {
+                // Forward upstream status and body to the browser, including error responses.
+            }
         });
     }
 
@@ -95,7 +100,7 @@ public class LlmController {
     public Map<String, Object> conversationList(
             @RequestParam(required = false, defaultValue = "100") int limit) {
         return conversations.conversations(json.createObjectNode().put("limit", limit)
-                .put("userId", AuthContextHolder.getAuthUserDetails().getLoginName()).toString());
+                .put(USER_ID, AuthContextHolder.getAuthUserDetails().getLoginName()).toString());
     }
 
     @GetMapping("/conversationDetails")
@@ -103,8 +108,8 @@ public class LlmController {
     @ResponseBody
     public Map<String, Object> conversationDetails(
             @RequestParam String conversationId) {
-        return conversations.conversation(json.createObjectNode().put("conversationId", conversationId)
-                .put("userId", AuthContextHolder.getAuthUserDetails().getLoginName()).toString());
+        return conversations.conversation(json.createObjectNode().put(CONVERSATION_ID, conversationId)
+                .put(USER_ID, AuthContextHolder.getAuthUserDetails().getLoginName()).toString());
     }
 
     @PostMapping("/conversationTitle")
@@ -113,7 +118,7 @@ public class LlmController {
     public Map<String, Object> conversationTitle(
             @RequestBody Map<String, Object> payload) {
         return conversations.rename(json.<ObjectNode>valueToTree(payload)
-                .put("userId", AuthContextHolder.getAuthUserDetails().getLoginName()).toString());
+                .put(USER_ID, AuthContextHolder.getAuthUserDetails().getLoginName()).toString());
     }
 
     @PostMapping("/conversationDelete")
@@ -122,7 +127,7 @@ public class LlmController {
     public Map<String, Object> conversationDelete(
             @RequestBody Map<String, Object> payload) {
         return conversations.deleteConversation(json.<ObjectNode>valueToTree(payload)
-                .put("userId", AuthContextHolder.getAuthUserDetails().getLoginName()).toString());
+                .put(USER_ID, AuthContextHolder.getAuthUserDetails().getLoginName()).toString());
     }
 
     @PostMapping("/executionCancel")
@@ -131,7 +136,7 @@ public class LlmController {
     public ResponseEntity<String> executionCancel(
             @RequestHeader(value = HttpHeaders.COOKIE, required = false) String cookie,
             @RequestBody Map<String, Object> payload) {
-        Object conversationId = payload.get("conversationId");
+        Object conversationId = payload.get(CONVERSATION_ID);
         Object runId = payload.get("runId");
         if (!(conversationId instanceof String) || !(runId instanceof String))
             throw new IllegalArgumentException("缺少 execution 标识");
@@ -150,10 +155,10 @@ public class LlmController {
             throw new IllegalArgumentException("请求参数不是合法 JSON", error);
         }
         Map<String, Object> claimed = executions.claimAguiRun(claimPayload
-                .put("userId", AuthContextHolder.getAuthUserDetails().getLoginName()).toString());
+                .put(USER_ID, AuthContextHolder.getAuthUserDetails().getLoginName()).toString());
         @SuppressWarnings("unchecked")
         Map<String, Object> execution = (Map<String, Object>) claimed.get("data");
-        String conversationId = String.valueOf(execution.get("conversationId"));
+        String conversationId = String.valueOf(execution.get(CONVERSATION_ID));
         String runId = String.valueOf(execution.get("runId"));
         AtomicBoolean disconnected = new AtomicBoolean();
         try {

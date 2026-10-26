@@ -34,8 +34,31 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.TimeZone;
 
+import static com.union.control.utils.AgentSupport.number;
+import static com.union.control.utils.AgentSupport.ok;
+import static com.union.control.utils.AgentSupport.text;
+
 @Service("scheduledTaskService")
 public class ScheduledTaskServiceImpl implements ScheduledTaskService {
+    private static final String ORG_CODE = "orgCode";
+    private static final String ROLE_ID = "roleId";
+    private static final String TASK_ID = "taskId";
+    private static final String TASK_NOT_FOUND = "定时任务不存在";
+    private static final String STATUS = "status";
+    private static final String PAGE_SIZE = "pageSize";
+    private static final String RUN_ID = "runId";
+    private static final String RUN_NOT_FOUND = "运行记录不存在";
+    private static final String SCHEDULE_TYPE = "scheduleType";
+    private static final String USER_ID = "userId";
+    private static final String CONTENT = "content";
+    private static final String AGENT_NAME = "agentName";
+    private static final String TITLE = "title";
+    private static final String PROMPT = "prompt";
+    private static final String RUN_AT = "runAt";
+    private static final String CRON_EXPRESSION = "cronExpression";
+    private static final String INTERVAL_SECONDS = "intervalSeconds";
+    private static final String TIMEZONE = "timezone";
+
     private static final int MAX_USER_TASKS = 100;
     private static final int CRON_INTERVAL_CHECKS = 32;
     private static final long MINIMUM_INTERVAL_SECONDS = 60;
@@ -59,14 +82,14 @@ public class ScheduledTaskServiceImpl implements ScheduledTaskService {
     public Map<String, Object> create(String input) {
         Map<String, Object> payload = AgentSupport.request(json, input);
         String userId = AgentSupport.userId(payload);
-        String orgCode = AgentSupport.identity(payload, "orgCode");
-        String roleId = AgentSupport.identity(payload, "roleId");
+        String orgCode = AgentSupport.identity(payload, ORG_CODE);
+        String roleId = AgentSupport.identity(payload, ROLE_ID);
         mapper.lockUserTasks(userId);
         if (mapper.countRunnableTasks(userId) >= MAX_USER_TASKS)
             throw new ConflictException("每个用户最多保留 100 个可运行任务");
         Map<String, Object> task = taskDefinition(payload, userId);
-        task.put("orgCode", orgCode);
-        task.put("roleId", roleId);
+        task.put(ORG_CODE, orgCode);
+        task.put(ROLE_ID, roleId);
         mapper.insertTask(task);
         return detailForUser(number(task.get("id")), userId);
     }
@@ -75,13 +98,13 @@ public class ScheduledTaskServiceImpl implements ScheduledTaskService {
     public Map<String, Object> update(String input) {
         Map<String, Object> payload = AgentSupport.request(json, input);
         String userId = AgentSupport.userId(payload);
-        long taskId = positiveLong(payload == null ? null : payload.get("taskId"), "taskId");
+        long taskId = positiveLong(payload == null ? null : payload.get(TASK_ID), TASK_ID);
         requireTaskOwner(taskId, userId, true);
         Map<String, Object> task = taskDefinition(payload, userId);
-        task.put("taskId", taskId);
-        task.put("orgCode", AgentSupport.identity(payload, "orgCode"));
-        task.put("roleId", AgentSupport.identity(payload, "roleId"));
-        if (mapper.updateTask(task) != 1) throw new NotFoundException("定时任务不存在");
+        task.put(TASK_ID, taskId);
+        task.put(ORG_CODE, AgentSupport.identity(payload, ORG_CODE));
+        task.put(ROLE_ID, AgentSupport.identity(payload, ROLE_ID));
+        if (mapper.updateTask(task) != 1) throw new NotFoundException(TASK_NOT_FOUND);
         return detailForUser(taskId, userId);
     }
 
@@ -89,9 +112,9 @@ public class ScheduledTaskServiceImpl implements ScheduledTaskService {
         Map<String, Object> payload = AgentSupport.request(json, input);
         String userId = AgentSupport.userId(payload);
         String keyword = optionalText(payload, "keyword", 255, null);
-        String status = optionalText(payload, "status", 32, null);
+        String status = optionalText(payload, STATUS, 32, null);
         int page = AgentSupport.integer(payload, "page", 1, Integer.MAX_VALUE);
-        int pageSize = AgentSupport.integer(payload, "pageSize", 1, 100);
+        int pageSize = AgentSupport.integer(payload, PAGE_SIZE, 1, 100);
         page(page, pageSize);
         String normalizedStatus = status == null || status.trim().isEmpty()
                 ? null : upper(status.trim());
@@ -109,21 +132,21 @@ public class ScheduledTaskServiceImpl implements ScheduledTaskService {
 
     public Map<String, Object> detail(String input) {
         Map<String, Object> payload = AgentSupport.request(json, input);
-        return detailForUser(positiveLong(payload.get("taskId"), "taskId"), AgentSupport.userId(payload));
+        return detailForUser(positiveLong(payload.get(TASK_ID), TASK_ID), AgentSupport.userId(payload));
     }
 
     private Map<String, Object> detailForUser(long taskId, String userId) {
         Map<String, Object> task = mapper.findTaskDetail(taskId, userId);
-        if (task == null) throw new NotFoundException("定时任务不存在");
+        if (task == null) throw new NotFoundException(TASK_NOT_FOUND);
         return ok(task);
     }
 
     public Map<String, Object> runs(String input) {
         Map<String, Object> payload = AgentSupport.request(json, input);
         String userId = AgentSupport.userId(payload);
-        long taskId = positiveLong(payload.get("taskId"), "taskId");
+        long taskId = positiveLong(payload.get(TASK_ID), TASK_ID);
         int page = AgentSupport.integer(payload, "page", 1, Integer.MAX_VALUE);
-        int pageSize = AgentSupport.integer(payload, "pageSize", 1, 100);
+        int pageSize = AgentSupport.integer(payload, PAGE_SIZE, 1, 100);
         page(page, pageSize);
         requireTaskOwner(taskId, userId, false);
         long total = mapper.countRuns(taskId, userId);
@@ -135,9 +158,9 @@ public class ScheduledTaskServiceImpl implements ScheduledTaskService {
     public Map<String, Object> runDetail(String input) {
         Map<String, Object> payload = AgentSupport.request(json, input);
         String userId = AgentSupport.userId(payload);
-        long runId = positiveLong(payload.get("runId"), "runId");
+        long runId = positiveLong(payload.get(RUN_ID), RUN_ID);
         Map<String, Object> row = ownedRun(runId, userId, false);
-        if (row == null) throw new NotFoundException("运行记录不存在");
+        if (row == null) throw new NotFoundException(RUN_NOT_FOUND);
         return ok(publicRun(row, true));
     }
 
@@ -156,9 +179,9 @@ public class ScheduledTaskServiceImpl implements ScheduledTaskService {
     public Map<String, Object> start(String input) {
         Map<String, Object> payload = AgentSupport.request(json, input);
         String userId = AgentSupport.userId(payload);
-        long taskId = positiveLong(payload.get("taskId"), "taskId");
+        long taskId = positiveLong(payload.get(TASK_ID), TASK_ID);
         Map<String, Object> task = requireTaskOwner(taskId, userId, true);
-        if (!"PAUSED".equals(string(task, "status")))
+        if (!"PAUSED".equals(string(task, STATUS)))
             throw new ConflictException("只有暂停任务可以启动");
         Instant now = Instant.now();
         Instant next = nextForTask(task, now);
@@ -170,7 +193,7 @@ public class ScheduledTaskServiceImpl implements ScheduledTaskService {
     public Map<String, Object> pause(String input) {
         Map<String, Object> payload = AgentSupport.request(json, input);
         String userId = AgentSupport.userId(payload);
-        long taskId = positiveLong(payload.get("taskId"), "taskId");
+        long taskId = positiveLong(payload.get(TASK_ID), TASK_ID);
         requireTaskOwner(taskId, userId, true);
         int changed = mapper.pauseTask(taskId, userId);
         if (changed != 1) throw new ConflictException("只有运行中的任务可以暂停");
@@ -181,7 +204,7 @@ public class ScheduledTaskServiceImpl implements ScheduledTaskService {
     public Map<String, Object> discard(String input) {
         Map<String, Object> payload = AgentSupport.request(json, input);
         String userId = AgentSupport.userId(payload);
-        long taskId = positiveLong(payload.get("taskId"), "taskId");
+        long taskId = positiveLong(payload.get(TASK_ID), TASK_ID);
         requireTaskOwner(taskId, userId, true);
         mapper.discardTask(taskId, userId);
         return ok(null);
@@ -194,14 +217,14 @@ public class ScheduledTaskServiceImpl implements ScheduledTaskService {
         long taskId = number(task.get("id"));
         Instant scheduledAt = instant(task.get("nextRunAt"));
         Map<String, Object> run = new LinkedHashMap<>();
-        run.put("taskId", taskId);
+        run.put(TASK_ID, taskId);
         run.put("scheduledAt", databaseDateTime(scheduledAt));
         mapper.insertRun(run);
-        String type = string(task, "scheduleType");
+        String type = string(task, SCHEDULE_TYPE);
         if ("ONCE".equals(type)) {
             mapper.completeOnceTask(taskId);
         } else {
-            Instant next = nextForTask(task, Instant.now());
+            Instant next = nextForTask(task, instant(task.get("databaseNow")));
             mapper.updateNextRun(taskId, databaseDateTime(next));
         }
         return number(run.get("id"));
@@ -214,28 +237,28 @@ public class ScheduledTaskServiceImpl implements ScheduledTaskService {
     public boolean beginRun(long runId, String tokenHash, String expiresAt) {
         Map<String, Object> context = mapper.findPendingRunContext(runId);
         if (context == null) return false;
-        identityValue(string(context, "userId"), "userId");
-        identityValue(string(context, "orgCode"), "orgCode");
-        identityValue(string(context, "roleId"), "roleId");
+        identityValue(string(context, USER_ID), USER_ID);
+        identityValue(string(context, ORG_CODE), ORG_CODE);
+        identityValue(string(context, ROLE_ID), ROLE_ID);
         return mapper.beginRun(runId, identityValue(tokenHash, "tokenHash"), expiresAt) == 1;
     }
 
     @Transactional
     public void completeFromProxy(long runId, Map<String, Object> result) {
         Map<String, Object> run = lockRun(runId);
-        if (terminal(string(run, "status"))) return;
-        if (!"RUNNING".equals(string(run, "status")))
+        if (terminal(string(run, STATUS))) return;
+        if (!"RUNNING".equals(string(run, STATUS)))
             throw new ConflictException("运行状态不可完成");
-        String content = rawText(result, "content", 1000000, true);
+        String content = rawText(result, CONTENT, 1000000, true);
         Map<String, Object> stored = new LinkedHashMap<>();
-        stored.put("content", content);
-        stored.put("agentName", optionalText(
-                result, "agentName", 128, "ScheduledTaskAgent"));
+        stored.put(CONTENT, content);
+        stored.put(AGENT_NAME, optionalText(
+                result, AGENT_NAME, 128, "ScheduledTaskAgent"));
         try {
             String value = json.writeValueAsString(stored);
             if (value.length() > 4000000) throw new IllegalArgumentException("运行结果过大");
             mapper.completeRun(runId, value);
-            completeOnceTask(number(run.get("taskId")));
+            completeOnceTask(number(run.get(TASK_ID)));
         } catch (Exception error) {
             if (error instanceof RuntimeException) throw (RuntimeException) error;
             throw new IllegalArgumentException("运行结果无法保存");
@@ -245,11 +268,11 @@ public class ScheduledTaskServiceImpl implements ScheduledTaskService {
     @Transactional
     public void failRun(long runId, String errorCode, String errorMessage) {
         Map<String, Object> run = lockRun(runId);
-        if (terminal(string(run, "status"))) return;
+        if (terminal(string(run, STATUS))) return;
         mapper.failRun(runId,
                 safeError(errorCode, "scheduled_run_failed", 64),
                 safeError(errorMessage, "定时任务执行失败", 512));
-        completeOnceTask(number(run.get("taskId")));
+        completeOnceTask(number(run.get(TASK_ID)));
     }
 
     public int failStaleRuns(int maxRunSeconds) {
@@ -264,24 +287,24 @@ public class ScheduledTaskServiceImpl implements ScheduledTaskService {
     public Map<String, Object> open(String input) {
         Map<String, Object> payload = AgentSupport.request(json, input);
         String userId = AgentSupport.userId(payload);
-        long runId = positiveLong(payload.get("runId"), "runId");
+        long runId = positiveLong(payload.get(RUN_ID), RUN_ID);
         Map<String, Object> run = ownedRun(runId, userId, true);
-        if (run == null) throw new NotFoundException("运行记录不存在");
+        if (run == null) throw new NotFoundException(RUN_NOT_FOUND);
         Object existing = run.get("resultConversationId");
         if (existing != null && !String.valueOf(existing).isEmpty()) {
             mapper.markRunRead(runId);
             return ok(Collections.<String, Object>singletonMap(
                     "conversationId", String.valueOf(existing)));
         }
-        String status = string(run, "status");
+        String status = string(run, STATUS);
         if (!terminal(status)) throw new ConflictException("运行尚未结束");
         Map<String, Object> result = result(run.get("resultPayload"));
         String content = "SUCCEEDED".equals(status)
-                ? rawText(result, "content", 1000000, true)
+                ? rawText(result, CONTENT, 1000000, true)
                 : safeError(string(run, "errorMessage"), "定时任务执行失败", 512);
         String conversationId = conversationService.materializeCompletedConversation(
-                userId, string(run, "title"), string(run, "prompt"), content,
-                optionalText(result, "agentName", 128, "ScheduledTaskAgent"));
+                userId, string(run, TITLE), string(run, PROMPT), content,
+                optionalText(result, AGENT_NAME, 128, "ScheduledTaskAgent"));
         mapper.attachConversation(runId, conversationId);
         Map<String, Object> opened = new LinkedHashMap<>();
         opened.put("conversationId", conversationId);
@@ -290,9 +313,9 @@ public class ScheduledTaskServiceImpl implements ScheduledTaskService {
 
     private ScheduleValues scheduleValues(
             Map<String, Object> payload, String type, ZoneId zone, Instant now) {
-        Instant runAt = parseInstant(text(payload, "runAt", 64, false), zone);
-        String cron = text(payload, "cronExpression", 128, false);
-        Long interval = optionalLong(payload.get("intervalSeconds"));
+        Instant runAt = parseInstant(text(payload, RUN_AT, 64, false), zone);
+        String cron = text(payload, CRON_EXPRESSION, 128, false);
+        Long interval = optionalLong(payload.get(INTERVAL_SECONDS));
         if ("ONCE".equals(type)) {
             if (runAt == null || !runAt.isAfter(now) || cron != null || interval != null)
                 throw new IllegalArgumentException("ONCE 调度字段非法");
@@ -311,21 +334,21 @@ public class ScheduledTaskServiceImpl implements ScheduledTaskService {
     }
 
     private Map<String, Object> taskDefinition(Map<String, Object> payload, String userId) {
-        String title = text(payload, "title", 255, true);
-        String prompt = text(payload, "prompt", 4096, true);
-        String type = upper(text(payload, "scheduleType", 16, true));
+        String title = text(payload, TITLE, 255, true);
+        String prompt = text(payload, PROMPT, 4096, true);
+        String type = upper(text(payload, SCHEDULE_TYPE, 16, true));
         if (!TYPES.contains(type)) throw new IllegalArgumentException("scheduleType 非法");
-        ZoneId zone = zone(text(payload, "timezone", 64, true));
+        ZoneId zone = zone(text(payload, TIMEZONE, 64, true));
         ScheduleValues values = scheduleValues(payload, type, zone, Instant.now());
         Map<String, Object> task = new LinkedHashMap<>();
-        task.put("userId", userId);
-        task.put("title", title);
-        task.put("prompt", prompt);
-        task.put("scheduleType", type);
-        task.put("runAt", databaseDateTime(values.runAt));
-        task.put("cronExpression", values.cronExpression);
-        task.put("intervalSeconds", values.intervalSeconds);
-        task.put("timezone", zone.getId());
+        task.put(USER_ID, userId);
+        task.put(TITLE, title);
+        task.put(PROMPT, prompt);
+        task.put(SCHEDULE_TYPE, type);
+        task.put(RUN_AT, databaseDateTime(values.runAt));
+        task.put(CRON_EXPRESSION, values.cronExpression);
+        task.put(INTERVAL_SECONDS, values.intervalSeconds);
+        task.put(TIMEZONE, zone.getId());
         task.put("nextRunAt", databaseDateTime(values.nextRunAt));
         Object permissions = payload.get("permissions");
         if (!(permissions instanceof List) || ((List<?>) permissions).isEmpty())
@@ -345,12 +368,13 @@ public class ScheduledTaskServiceImpl implements ScheduledTaskService {
     }
 
     private Instant nextForTask(Map<String, Object> task, Instant now) {
-        String type = string(task, "scheduleType");
-        Instant anchor = instant(task.get("runAt"));
-        if ("ONCE".equals(type)) return anchor.isAfter(now) ? anchor : now;
+        String type = string(task, SCHEDULE_TYPE);
         if ("CRON".equals(type)) return nextCron(
-                string(task, "cronExpression"), zone(string(task, "timezone")), now);
-        long interval = number(task.get("intervalSeconds"));
+                string(task, CRON_EXPRESSION), zone(string(task, TIMEZONE)), now);
+        Instant anchor = instant(task.get(RUN_AT));
+        if (anchor == null) throw new DataCorruptionException();
+        if ("ONCE".equals(type)) return anchor.isAfter(now) ? anchor : now;
+        long interval = number(task.get(INTERVAL_SECONDS));
         return nextInterval(anchor, interval, now);
     }
 
@@ -392,7 +416,7 @@ public class ScheduledTaskServiceImpl implements ScheduledTaskService {
 
     private Map<String, Object> requireTaskOwner(long taskId, String userId, boolean lock) {
         Map<String, Object> task = mapper.findTaskOwner(taskId, userId, lock);
-        if (task == null) throw new NotFoundException("定时任务不存在");
+        if (task == null) throw new NotFoundException(TASK_NOT_FOUND);
         return task;
     }
 
@@ -402,7 +426,7 @@ public class ScheduledTaskServiceImpl implements ScheduledTaskService {
 
     private Map<String, Object> lockRun(long runId) {
         Map<String, Object> run = mapper.findRunForUpdate(runId);
-        if (run == null) throw new NotFoundException("运行记录不存在");
+        if (run == null) throw new NotFoundException(RUN_NOT_FOUND);
         return run;
     }
 
@@ -419,7 +443,7 @@ public class ScheduledTaskServiceImpl implements ScheduledTaskService {
     private Map<String, Object> publicRun(Map<String, Object> row, boolean includeResultContent) {
         Map<String, Object> value = new LinkedHashMap<>(row);
         Object raw = value.remove("resultPayload");
-        if (includeResultContent) value.put("resultContent", result(raw).get("content"));
+        if (includeResultContent) value.put("resultContent", result(raw).get(CONTENT));
         value.put("readFlag", numberOrZero(value.get("readFlag")) == 1);
         return value;
     }
@@ -439,23 +463,13 @@ public class ScheduledTaskServiceImpl implements ScheduledTaskService {
         data.put("items", items);
         data.put("total", total);
         data.put("page", page);
-        data.put("pageSize", pageSize);
+        data.put(PAGE_SIZE, pageSize);
         return data;
     }
 
     private static void page(int page, int pageSize) {
         if (page < 1 || page > 100000) throw new IllegalArgumentException("page 非法");
         if (pageSize < 1 || pageSize > 100) throw new IllegalArgumentException("pageSize 非法");
-    }
-
-    private static String text(Map<?, ?> values, String key, int max, boolean required) {
-        Object raw = values == null ? null : values.get(key);
-        if (raw != null && !(raw instanceof String)) throw new IllegalArgumentException(key + " 非法");
-        String value = raw == null ? null : ((String) raw).trim();
-        if (value != null && value.isEmpty()) value = null;
-        if ((required && value == null) || (value != null && value.length() > max))
-            throw new IllegalArgumentException(key + " 非法");
-        return value;
     }
 
     private static String rawText(Map<?, ?> values, String key, int max, boolean required) {
@@ -470,7 +484,7 @@ public class ScheduledTaskServiceImpl implements ScheduledTaskService {
 
     private static String optionalText(
             Map<String, Object> values, String key, int max, String fallback) {
-        String value = text(values, key, max, false);
+        String value = values == null ? null : AgentSupport.optionalText(values, key, max);
         return value == null ? fallback : value;
     }
 
@@ -536,12 +550,8 @@ public class ScheduledTaskServiceImpl implements ScheduledTaskService {
         return ((Number) value).longValue();
     }
 
-    private static long number(Object value) {
-        return value instanceof Number ? ((Number) value).longValue() : Long.parseLong(String.valueOf(value));
-    }
-
     private static long numberOrZero(Object value) {
-        if (value instanceof Boolean) return (Boolean) value ? 1 : 0;
+        if (value instanceof Boolean) return Boolean.TRUE.equals(value) ? 1 : 0;
         return value == null ? 0 : number(value);
     }
 
@@ -557,13 +567,6 @@ public class ScheduledTaskServiceImpl implements ScheduledTaskService {
         if (value == null || value.trim().isEmpty()) return fallback;
         String normalized = value.trim();
         return normalized.substring(0, Math.min(normalized.length(), max));
-    }
-
-    private static Map<String, Object> ok(Object data) {
-        Map<String, Object> response = new LinkedHashMap<>();
-        response.put("success", true);
-        response.put("data", data);
-        return response;
     }
 
     private static class ScheduleValues {

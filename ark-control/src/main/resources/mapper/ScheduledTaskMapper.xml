@@ -165,7 +165,7 @@
     <select id="findDueTask" resultType="map">
         SELECT id,schedule_type AS scheduleType,run_at AS runAt,
                cron_expression AS cronExpression,interval_seconds AS intervalSeconds,
-               timezone,next_run_at AS nextRunAt
+               timezone,next_run_at AS nextRunAt,UTC_TIMESTAMP(3) AS databaseNow
         FROM t_m_announce_scheduled_task
         WHERE delete_flag=1 AND status='ACTIVE' AND next_run_at&lt;=UTC_TIMESTAMP(3)
         ORDER BY next_run_at,id LIMIT 1 FOR UPDATE SKIP LOCKED

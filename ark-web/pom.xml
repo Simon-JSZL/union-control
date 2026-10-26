@@ -17,6 +17,7 @@
     <properties>
         <java.version>1.8</java.version>
         <shiro.version>1.12.0</shiro.version>
+        <test.source>import-test</test.source>
     </properties>
 
     <dependencies>
@@ -71,6 +72,7 @@
     </dependencies>
 
     <build>
+        <testSourceDirectory>${test.source}</testSourceDirectory>
         <plugins>
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>

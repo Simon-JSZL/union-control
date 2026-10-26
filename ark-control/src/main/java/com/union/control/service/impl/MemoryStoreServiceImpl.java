@@ -16,6 +16,13 @@ import static com.union.control.utils.AgentSupport.*;
 
 @Service("memoryStoreService")
 public class MemoryStoreServiceImpl implements MemoryStoreService {
+    private static final String CONTENT = "content";
+    private static final String VERSION = "version";
+    private static final String OPERATION_ID = "operationId";
+    private static final String FINGERPRINT = "fingerprint";
+    private static final String MUTATION = "mutation";
+    private static final String PERSONAL_PATH = "/personal/";
+
     private static final Pattern MEMORY_PATH =
             Pattern.compile("[A-Za-z0-9._:@+-]+(?:/[A-Za-z0-9._:@+-]+)*");
 
@@ -39,11 +46,11 @@ public class MemoryStoreServiceImpl implements MemoryStoreService {
             return response;
         }
         Map<String, Object> row = rows.get(0);
-        String content = String.valueOf(row.get("content"));
+        String content = String.valueOf(row.get(CONTENT));
         Map<String, Object> file = new LinkedHashMap<>();
-        file.put("content", content.substring(0, Math.min(content.length(), maxChars)));
-        file.put("version", String.valueOf(row.get("version")));
-        file.put("operationId", row.get("operationId"));
+        file.put(CONTENT, content.substring(0, Math.min(content.length(), maxChars)));
+        file.put(VERSION, String.valueOf(row.get(VERSION)));
+        file.put(OPERATION_ID, row.get(OPERATION_ID));
         file.put("truncated", content.length() > maxChars);
         response.put("file", file);
         return response;
@@ -63,12 +70,12 @@ public class MemoryStoreServiceImpl implements MemoryStoreService {
     public Map<String, Object> memoryOperation(String input) {
         Map<String, Object> payload = request(json, input);
         String userId = userId(payload);
-        String operationId = text(payload, "operationId", 128, true);
-        String fingerprint = text(payload, "fingerprint", 128, true);
+        String operationId = text(payload, OPERATION_ID, 128, true);
+        String fingerprint = text(payload, FINGERPRINT, 128, true);
         List<Map<String, Object>> rows = mapper.findMemoryOperation(userId, operationId, false);
         if (rows.isEmpty()) {
             Map<String, Object> response = success();
-            response.put("mutation", null);
+            response.put(MUTATION, null);
             return response;
         }
         return replayResponse(rows.get(0), fingerprint);
@@ -76,55 +83,52 @@ public class MemoryStoreServiceImpl implements MemoryStoreService {
 
     @Transactional
     public Map<String, Object> memoryWrite(String input) {
-        Map<String, Object> payload = request(json, input);
-        String userId = userId(payload);
-        String path = memoryPath(userId, payload, "path");
-        String content = text(payload, "content", 65536, true);
-        String expected = optionalText(payload, "expectedVersion", 32);
-        Operation operation = operation(payload);
-        Map<String, Object> replay = replay(userId, operation);
-        if (replay != null) return replay;
-        List<Map<String, Object>> rows = memoryRow(userId, path);
-        String currentVersion = rows.isEmpty() ? null : String.valueOf(rows.get(0).get("version"));
-        if (!same(currentVersion, expected))
-            return memoryError("version_conflict", "memory version 已变化");
-        boolean existed = !rows.isEmpty();
-        Long prior = mapper.currentMemoryVersion(userId, path);
-        long version = (prior == null ? 0 : prior) + 1;
-        if (existed) {
-            mapper.updateMemoryFile(content, version, operation == null ? null : operation.id,
-                    rows.get(0).get("id"));
-        } else {
-            mapper.insertMemoryFile(userId, path, content, version,
-                    operation == null ? null : operation.id);
-        }
-        saveReceipt(userId, operation, version, existed);
-        Map<String, Object> response = success();
-        response.put("mutation", mutation(version, false, existed));
-        return response;
+        return mutateMemory(input, false);
     }
 
     @Transactional
     public Map<String, Object> memoryDelete(String input) {
+        return mutateMemory(input, true);
+    }
+
+    private Map<String, Object> mutateMemory(String input, boolean delete) {
         Map<String, Object> payload = request(json, input);
         String userId = userId(payload);
         String path = memoryPath(userId, payload, "path");
+        String content = delete ? null : text(payload, CONTENT, 65536, true);
         String expected = optionalText(payload, "expectedVersion", 32);
         Operation operation = operation(payload);
         Map<String, Object> replay = replay(userId, operation);
         if (replay != null) return replay;
         List<Map<String, Object>> rows = memoryRow(userId, path);
-        String currentVersion = rows.isEmpty() ? null : String.valueOf(rows.get(0).get("version"));
+        String currentVersion = rows.isEmpty() ? null : String.valueOf(rows.get(0).get(VERSION));
         if (!same(currentVersion, expected))
             return memoryError("version_conflict", "memory version 已变化");
         boolean existed = !rows.isEmpty();
-        if (existed) {
-            mapper.softDeleteMemoryFile(rows.get(0).get("id"));
+        Long version = null;
+        if (delete) {
+            if (existed) mapper.softDeleteMemoryFile(rows.get(0).get("id"));
+        } else {
+            version = writeMemory(userId, path, content, operation, rows);
         }
-        saveReceipt(userId, operation, null, existed);
+        saveReceipt(userId, operation, version, existed);
         Map<String, Object> response = success();
-        response.put("mutation", mutation(null, false, existed));
+        response.put(MUTATION, mutation(version, false, existed));
         return response;
+    }
+
+    private long writeMemory(String userId, String path, String content,
+                             Operation operation, List<Map<String, Object>> rows) {
+        Long prior = mapper.currentMemoryVersion(userId, path);
+        long version = (prior == null ? 0 : prior) + 1;
+        if (rows.isEmpty()) {
+            mapper.insertMemoryFile(userId, path, content, version,
+                    operation == null ? null : operation.id);
+        } else {
+            mapper.updateMemoryFile(content, version, operation == null ? null : operation.id,
+                    rows.get(0).get("id"));
+        }
+        return version;
     }
 
     public Map<String, Object> memorySearch(String input) {
@@ -146,7 +150,7 @@ public class MemoryStoreServiceImpl implements MemoryStoreService {
         for (int index = 0; index < scanned && matches.size() < limit && remaining > 0; index++) {
             Map<String, Object> row = rows.get(index);
             String path = String.valueOf(row.get("path"));
-            String content = String.valueOf(row.get("content"));
+            String content = String.valueOf(row.get(CONTENT));
             String bounded = content.substring(0, Math.min(content.length(), maxFileChars));
             if (!path.toLowerCase().contains(lowerQuery) && !bounded.toLowerCase().contains(lowerQuery))
                 continue;
@@ -181,10 +185,10 @@ public class MemoryStoreServiceImpl implements MemoryStoreService {
 
     private Map<String, Object> replayResponse(
             Map<String, Object> row, String fingerprint) {
-        if (!fingerprint.equals(String.valueOf(row.get("fingerprint"))))
+        if (!fingerprint.equals(String.valueOf(row.get(FINGERPRINT))))
             return memoryError("operation_conflict", "operation id 已被不同参数使用");
         Map<String, Object> response = success();
-        response.put("mutation", mutation(row.get("resultVersion"), true,
+        response.put(MUTATION, mutation(row.get("resultVersion"), true,
                 number(row.get("existed")) != 0));
         return response;
     }
@@ -202,13 +206,13 @@ public class MemoryStoreServiceImpl implements MemoryStoreService {
         @SuppressWarnings("unchecked")
         Map<String, Object> value = (Map<String, Object>) raw;
         return new Operation(text(value, "id", 128, true),
-                text(value, "fingerprint", 128, true));
+                text(value, FINGERPRINT, 128, true));
     }
 
     private String memoryPath(String userId, Map<String, Object> payload, String key) {
         String path = text(payload, key, 512, true);
         if (!MEMORY_PATH.matcher(path).matches() || path.contains("..") ||
-                !path.startsWith(userId + "/personal/"))
+                !path.startsWith(userId + PERSONAL_PATH))
             throw new IllegalArgumentException("memory path 非法");
         return path;
     }
@@ -216,8 +220,8 @@ public class MemoryStoreServiceImpl implements MemoryStoreService {
     private String memoryPrefix(String userId, Map<String, Object> payload) {
         String prefix = optionalText(payload, "prefix", 512);
         if (prefix == null) prefix = "";
-        if (prefix.isEmpty()) prefix = userId + "/personal/";
-        if (!prefix.startsWith(userId + "/personal/") || prefix.contains(".."))
+        if (prefix.isEmpty()) prefix = userId + PERSONAL_PATH;
+        if (!prefix.startsWith(userId + PERSONAL_PATH) || prefix.contains(".."))
             throw new IllegalArgumentException("memory prefix 非法");
         return prefix;
     }
@@ -226,7 +230,7 @@ public class MemoryStoreServiceImpl implements MemoryStoreService {
     private static Map<String, Object> mutation(
             Object version, boolean replayed, boolean existed) {
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put("version", version == null ? null : String.valueOf(version));
+        result.put(VERSION, version == null ? null : String.valueOf(version));
         result.put("replayed", replayed);
         result.put("existed", existed);
         return result;

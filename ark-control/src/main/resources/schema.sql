@@ -112,6 +112,7 @@ CREATE TABLE IF NOT EXISTS `t_m_announce_scheduled_task` (
 
 CREATE TABLE IF NOT EXISTS `t_m_announce_scheduled_run` (
   `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '数据库自增主键',
+  `lookup_code` CHAR(6) DEFAULT NULL COMMENT '执行定位码',
   `task_id` BIGINT UNSIGNED NOT NULL COMMENT '所属定时任务主键',
   `scheduled_at` DATETIME(3) NOT NULL COMMENT '本次计划执行时间，UTC',
   `status` VARCHAR(16) COLLATE utf8mb4_bin NOT NULL COMMENT '运行状态：PENDING、RUNNING、SUCCEEDED、FAILED',

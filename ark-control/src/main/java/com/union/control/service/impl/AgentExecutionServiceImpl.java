@@ -18,6 +18,13 @@ import static com.union.control.utils.AgentSupport.*;
 
 @Service("agentExecutionService")
 public class AgentExecutionServiceImpl implements AgentExecutionService {
+    private static final String RUN_ID = "runId";
+    private static final String ERROR_CODE = "errorCode";
+    private static final String STATUS = "status";
+    private static final String AGENT_NAME = "agentName";
+    private static final String PARENT_RUN_ID = "parentRunId";
+    private static final String DELEGATION_TOOL_CALL_ID = "delegationToolCallId";
+
     private final AgentExecutionMapper executionMapper;
     private final ConversationMapper conversationMapper;
     private final ObjectMapper json;
@@ -36,7 +43,7 @@ public class AgentExecutionServiceImpl implements AgentExecutionService {
         Map<String, Object> input = request(json, payload);
         String userId = userId(input);
         String conversationId = text(input, "threadId", 64, true);
-        String runId = text(input, "runId", 64, true);
+        String runId = text(input, RUN_ID, 64, true);
         requireId(conversationId);
         requireExecutionToken(runId);
         String title = conversationTitle(input);
@@ -55,7 +62,7 @@ public class AgentExecutionServiceImpl implements AgentExecutionService {
         Map<String, Object> payload = request(json, input);
         String userId = userId(payload);
         String conversationId = text(payload, "conversationId", 64, true);
-        String rootRunId = text(payload, "runId", 64, true);
+        String rootRunId = text(payload, RUN_ID, 64, true);
         requireId(conversationId);
         requireExecutionToken(rootRunId);
         if (conversationMapper.requireOwned(conversationId, userId, true) == null)
@@ -78,8 +85,8 @@ public class AgentExecutionServiceImpl implements AgentExecutionService {
                 userId, conversationId, rootRunId, root, requested);
         persistMessages(userId, conversationId, persisted, (List<?>) rawMessages);
         for (Map<String, Object> value : requested.values())
-            finishExecution(persisted.get(String.valueOf(value.get("runId"))),
-                    String.valueOf(value.get("status")), (String) value.get("errorCode"));
+            finishExecution(persisted.get(String.valueOf(value.get(RUN_ID))),
+                    String.valueOf(value.get(STATUS)), (String) value.get(ERROR_CODE));
         conversationMapper.touchConversation(conversationId, userId);
         return ok(null);
     }
@@ -88,18 +95,18 @@ public class AgentExecutionServiceImpl implements AgentExecutionService {
             String userId, String conversationId, String rootRunId,
             Map<String, Object> root, Map<String, Map<String, Object>> requested) {
         executionMapper.updateRootAgent(number(root.get("id")),
-                String.valueOf(requested.get(rootRunId).get("agentName")));
+                String.valueOf(requested.get(rootRunId).get(AGENT_NAME)));
         Map<String, Map<String, Object>> persisted = new HashMap<>();
         persisted.put(rootRunId, root);
         for (Map<String, Object> value : requested.values()) {
-            String runId = String.valueOf(value.get("runId"));
+            String runId = String.valueOf(value.get(RUN_ID));
             if (rootRunId.equals(runId)) continue;
-            String parentRunId = String.valueOf(value.get("parentRunId"));
+            String parentRunId = String.valueOf(value.get(PARENT_RUN_ID));
             Map<String, Object> parent = persisted.get(parentRunId);
             if (parent == null) throw new IllegalArgumentException("parent execution 不存在");
             executionMapper.insertChildExecution(runId, conversationId, userId,
-                    number(parent.get("id")), String.valueOf(value.get("agentName")),
-                    (String) value.get("delegationToolCallId"), (String) value.get("task"));
+                    number(parent.get("id")), String.valueOf(value.get(AGENT_NAME)),
+                    (String) value.get(DELEGATION_TOOL_CALL_ID), (String) value.get("task"));
             persisted.put(runId, loadExecution(userId, conversationId, runId, true));
         }
         return persisted;
@@ -113,7 +120,7 @@ public class AgentExecutionServiceImpl implements AgentExecutionService {
         for (Object raw : messages) {
             if (!(raw instanceof Map)) throw new IllegalArgumentException("AG-UI message 必须是对象");
             Map<?, ?> envelope = (Map<?, ?>) raw;
-            String messageRunId = text(envelope, "runId", 64, true);
+            String messageRunId = text(envelope, RUN_ID, 64, true);
             Object rawMessage = envelope.get("message");
             if (!(rawMessage instanceof Map)) throw new IllegalArgumentException("message 非法");
             @SuppressWarnings("unchecked") Map<String, Object> message =
@@ -165,22 +172,22 @@ public class AgentExecutionServiceImpl implements AgentExecutionService {
         for (Object raw : values) {
             if (!(raw instanceof Map)) throw new IllegalArgumentException("execution 非法");
             Map<?, ?> value = (Map<?, ?>) raw;
-            String runId = text(value, "runId", 64, true);
+            String runId = text(value, RUN_ID, 64, true);
             requireExecutionToken(runId);
-            String parentRunId = text(value, "parentRunId", 64, false);
-            String agentName = text(value, "agentName", 128, true);
-            String delegationCallId = text(value, "delegationToolCallId", 128, false);
+            String parentRunId = text(value, PARENT_RUN_ID, 64, false);
+            String agentName = text(value, AGENT_NAME, 128, true);
+            String delegationCallId = text(value, DELEGATION_TOOL_CALL_ID, 128, false);
             String task = text(value, "task", 1000, false);
-            String status = text(value, "status", 32, true);
-            String errorCode = text(value, "errorCode", 64, false);
+            String status = text(value, STATUS, 32, true);
+            String errorCode = text(value, ERROR_CODE, 64, false);
             Map<String, Object> normalized = new LinkedHashMap<>();
-            normalized.put("runId", runId);
-            normalized.put("parentRunId", parentRunId);
-            normalized.put("agentName", agentName);
-            normalized.put("delegationToolCallId", delegationCallId);
+            normalized.put(RUN_ID, runId);
+            normalized.put(PARENT_RUN_ID, parentRunId);
+            normalized.put(AGENT_NAME, agentName);
+            normalized.put(DELEGATION_TOOL_CALL_ID, delegationCallId);
             normalized.put("task", task);
-            normalized.put("status", status);
-            normalized.put("errorCode", errorCode);
+            normalized.put(STATUS, status);
+            normalized.put(ERROR_CODE, errorCode);
             if (result.put(runId, normalized) != null)
                 throw new IllegalArgumentException("execution runId 重复");
         }

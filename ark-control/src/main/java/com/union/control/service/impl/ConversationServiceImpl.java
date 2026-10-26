@@ -20,6 +20,13 @@ import static com.union.control.utils.AgentSupport.*;
 
 @Service("conversationService")
 public class ConversationServiceImpl implements ConversationService {
+    private static final String CONVERSATION_ID = "conversationId";
+    private static final String MESSAGES = "messages";
+    private static final String CONVERSATION_NOT_FOUND = "会话不存在";
+    private static final String RUN_ID = "runId";
+    private static final String AGENT_NAME = "agentName";
+    private static final String PARENT_EXECUTION_ID = "parentExecutionId";
+
     private final ConversationMapper conversationMapper;
     private final AgentExecutionMapper executionMapper;
     private final ScheduledTaskMapper scheduledTaskMapper;
@@ -55,11 +62,11 @@ public class ConversationServiceImpl implements ConversationService {
     public Map<String, Object> conversation(String input) {
         Map<String, Object> request = request(json, input);
         String userId = userId(request);
-        String conversationId = text(request, "conversationId", 64, true);
+        String conversationId = text(request, CONVERSATION_ID, 64, true);
         requireId(conversationId);
         Map<String, Object> result = loadConversation(userId, conversationId);
         List<Map<String, Object>> executions = executionMapper.findExecutions(userId, conversationId);
-        result.put("messages", loadBrowserMessages(userId, conversationId, executions));
+        result.put(MESSAGES, loadBrowserMessages(userId, conversationId, executions));
         result.put("executions", publicExecutions(executions));
         return ok(result);
     }
@@ -67,23 +74,23 @@ public class ConversationServiceImpl implements ConversationService {
     public Map<String, Object> conversationMessages(String input) {
         Map<String, Object> payload = request(json, input);
         String userId = userId(payload);
-        String conversationId = text(payload, "conversationId", 64, true);
+        String conversationId = text(payload, CONVERSATION_ID, 64, true);
         requireId(conversationId);
         requireOwned(userId, conversationId, false);
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("success", true);
-        response.put("messages", loadRootMessages(userId, conversationId));
+        response.put(MESSAGES, loadRootMessages(userId, conversationId));
         return response;
     }
 
     public Map<String, Object> rename(String input) {
         Map<String, Object> payload = request(json, input);
         String userId = userId(payload);
-        String conversationId = text(payload, "conversationId", 64, true);
+        String conversationId = text(payload, CONVERSATION_ID, 64, true);
         String title = text(payload, "title", 255, true);
         requireId(conversationId);
         if (conversationMapper.updateConversationTitle(title, conversationId, userId) != 1)
-            throw new NoSuchElementException("会话不存在");
+            throw new NoSuchElementException(CONVERSATION_NOT_FOUND);
         return ok(loadConversation(userId, conversationId));
     }
 
@@ -91,14 +98,14 @@ public class ConversationServiceImpl implements ConversationService {
     public Map<String, Object> deleteConversation(String input) {
         Map<String, Object> payload = request(json, input);
         String userId = userId(payload);
-        String conversationId = text(payload, "conversationId", 64, true);
+        String conversationId = text(payload, CONVERSATION_ID, 64, true);
         requireId(conversationId);
         requireOwned(userId, conversationId, true);
         conversationMapper.softDeleteMessages(conversationId, userId);
         executionMapper.softDeleteExecutions(conversationId, userId);
         scheduledTaskMapper.softDeleteByConversation(conversationId, userId);
         int updated = conversationMapper.softDeleteConversation(conversationId, userId);
-        if (updated != 1) throw new NoSuchElementException("会话不存在");
+        if (updated != 1) throw new NoSuchElementException(CONVERSATION_NOT_FOUND);
         return ok(null);
     }
 
@@ -111,10 +118,10 @@ public class ConversationServiceImpl implements ConversationService {
         String runId = "scheduled-open-" + random;
         conversationMapper.insertConversation(conversationId, userId, title);
         Map<String, Object> execution = new LinkedHashMap<>();
-        execution.put("runId", runId);
-        execution.put("conversationId", conversationId);
+        execution.put(RUN_ID, runId);
+        execution.put(CONVERSATION_ID, conversationId);
         execution.put("userId", userId);
-        execution.put("agentName", agentName);
+        execution.put(AGENT_NAME, agentName);
         executionMapper.insertCompletedRootExecution(execution);
         insertTrustedMessage(conversationId, userId,
                 "scheduled-user-" + random, number(execution.get("id")), "user", 1, prompt);
@@ -150,16 +157,16 @@ public class ConversationServiceImpl implements ConversationService {
             String userId, String conversationId, List<Map<String, Object>> executions) {
         Map<String, Map<String, Object>> byRun = new LinkedHashMap<>();
         for (Map<String, Object> execution : executions)
-            byRun.put(String.valueOf(execution.get("runId")), execution);
+            byRun.put(String.valueOf(execution.get(RUN_ID)), execution);
         List<Map<String, Object>> rows = conversationMapper.findBrowserMessages(userId, conversationId);
         List<Object> result = new ArrayList<>();
         Map<String, List<Object>> childMessages = new LinkedHashMap<>();
         for (Map<String, Object> row : rows) {
-            if (row.get("parentExecutionId") == null) {
+            if (row.get(PARENT_EXECUTION_ID) == null) {
                 result.add(message(row));
                 continue;
             }
-            String runId = String.valueOf(row.get("runId"));
+            String runId = String.valueOf(row.get(RUN_ID));
             List<Object> messages = childMessages.get(runId);
             if (messages == null) {
                 messages = new ArrayList<>();
@@ -169,8 +176,8 @@ public class ConversationServiceImpl implements ConversationService {
             messages.add(message(row));
         }
         for (Map<String, Object> execution : executions) {
-            if (execution.get("parentExecutionId") == null) continue;
-            String runId = String.valueOf(execution.get("runId"));
+            if (execution.get(PARENT_EXECUTION_ID) == null) continue;
+            String runId = String.valueOf(execution.get(RUN_ID));
             if (!childMessages.containsKey(runId))
                 result.add(activity(execution, new ArrayList<>()));
         }
@@ -200,16 +207,16 @@ public class ConversationServiceImpl implements ConversationService {
             Map<String, Object> execution, List<Object> messages) {
         if (execution == null) throw new IllegalStateException("execution 数据损坏");
         Map<String, Object> content = new LinkedHashMap<>();
-        content.put("runId", execution.get("runId"));
+        content.put(RUN_ID, execution.get(RUN_ID));
         content.put("parentRunId", execution.get("parentRunId"));
-        content.put("agentName", execution.get("agentName"));
+        content.put(AGENT_NAME, execution.get(AGENT_NAME));
         content.put("delegationToolCallId", execution.get("delegationToolCallId"));
         content.put("task", execution.get("task"));
         content.put("status", execution.get("status"));
-        content.put("messages", messages);
+        content.put(MESSAGES, messages);
         content.put("errorCode", execution.get("errorCode"));
         Map<String, Object> activity = new LinkedHashMap<>();
-        activity.put("id", "subagent:" + execution.get("runId"));
+        activity.put("id", "subagent:" + execution.get(RUN_ID));
         activity.put("role", "activity");
         activity.put("activityType", "subagent_execution");
         activity.put("content", content);
@@ -219,7 +226,7 @@ public class ConversationServiceImpl implements ConversationService {
     private Map<String, Object> loadConversation(String userId, String conversationId) {
         Map<String, Object> conversation =
                 conversationMapper.findConversation(userId, conversationId);
-        if (conversation == null) throw new NoSuchElementException("会话不存在");
+        if (conversation == null) throw new NoSuchElementException(CONVERSATION_NOT_FOUND);
         return conversation;
     }
 
@@ -232,14 +239,14 @@ public class ConversationServiceImpl implements ConversationService {
     private static Map<String, Object> publicExecution(Map<String, Object> row) {
         Map<String, Object> result = new LinkedHashMap<>(row);
         result.remove("id");
-        result.remove("parentExecutionId");
+        result.remove(PARENT_EXECUTION_ID);
         return result;
     }
 
 
     private void requireOwned(String userId, String conversationId, boolean lock) {
         if (conversationMapper.requireOwned(conversationId, userId, lock) == null) {
-            throw new NoSuchElementException("会话不存在");
+            throw new NoSuchElementException(CONVERSATION_NOT_FOUND);
         }
     }
 }

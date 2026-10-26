@@ -1,6 +1,7 @@
 package com.epcc.arkweb.web.llm;
 
 import com.union.control.service.ScheduledTaskService;
+import com.epcc.arkweb.utils.ResultMsg;
 import org.apache.shiro.SecurityUtils;
 import org.apache.shiro.subject.Subject;
 import org.apache.shiro.authz.AuthorizationException;
@@ -27,6 +28,9 @@ import java.util.Map;
 /** Agent-only MVC guard. Scheduled credentials never log in a Subject. */
 @Component
 public final class AgentAuthorizationInterceptor extends HandlerInterceptorAdapter {
+    private static final String PERMISSION_DENIED = "agent_permission_denied";
+    private static final String INVALID_SUFFIX = " invalid";
+
     private static final String AUTHORIZATION_PREFIX = "Scheduled ";
     public static final String CONTEXT_ATTRIBUTE =
             AgentAuthorizationInterceptor.class.getName() + ".scheduledContext";
@@ -45,7 +49,7 @@ public final class AgentAuthorizationInterceptor extends HandlerInterceptorAdapt
         AgentPermission required = handler instanceof HandlerMethod
                 ? ((HandlerMethod) handler).getMethodAnnotation(AgentPermission.class) : null;
         if (required == null || required.value().trim().isEmpty())
-            return deny(response, 403, "agent_permission_denied");
+            return deny(response, 403, PERMISSION_DENIED);
         List<String> authorization = headers(request, HttpHeaders.AUTHORIZATION);
         if (authorization.size() > 1
                 || (!authorization.isEmpty() && request.getHeader(HttpHeaders.COOKIE) != null))
@@ -59,17 +63,17 @@ public final class AgentAuthorizationInterceptor extends HandlerInterceptorAdapt
                 Map<String, Object> context = context(row);
                 Object snapshot = row.get("permissionSnapshot");
                 if (!(snapshot instanceof String))
-                    return deny(response, 403, "agent_permission_denied");
+                    return deny(response, 403, PERMISSION_DENIED);
                 JsonNode permissions = json.readTree((String) snapshot);
                 if (permissions == null || !permissions.isArray())
-                    return deny(response, 403, "agent_permission_denied");
+                    return deny(response, 403, PERMISSION_DENIED);
                 boolean permitted = false;
                 for (JsonNode permission : permissions) {
                     if (!permission.isTextual())
-                        return deny(response, 403, "agent_permission_denied");
+                        return deny(response, 403, PERMISSION_DENIED);
                     if (required.value().equals(permission.textValue())) permitted = true;
                 }
-                if (!permitted) return deny(response, 403, "agent_permission_denied");
+                if (!permitted) return deny(response, 403, PERMISSION_DENIED);
                 request.setAttribute(CONTEXT_ATTRIBUTE, context);
                 return true;
             } catch (IOException | RuntimeException error) {
@@ -80,11 +84,11 @@ public final class AgentAuthorizationInterceptor extends HandlerInterceptorAdapt
         try {
             Subject subject = SecurityUtils.getSubject();
             if (!subject.isAuthenticated())
-                return deny(response, 403, "agent_permission_denied");
+                return deny(response, 403, PERMISSION_DENIED);
             subject.checkPermission(required.value());
             return true;
         } catch (AuthorizationException error) {
-            return deny(response, 403, "agent_permission_denied");
+            return deny(response, 403, PERMISSION_DENIED);
         } catch (RuntimeException error) {
             return deny(response, 401, "cas_auth_error");
         }
@@ -131,26 +135,28 @@ public final class AgentAuthorizationInterceptor extends HandlerInterceptorAdapt
     private static long positiveNumber(Map<String, Object> row, String key) {
         Object value = row.get(key);
         if (!(value instanceof Number) || ((Number) value).longValue() <= 0)
-            throw new IllegalArgumentException(key + " invalid");
+            throw new IllegalArgumentException(key + INVALID_SUFFIX);
         return ((Number) value).longValue();
     }
 
     private static String text(Map<String, Object> row, String key, int max) {
         Object raw = row.get(key);
-        if (!(raw instanceof String)) throw new IllegalArgumentException(key + " invalid");
+        if (!(raw instanceof String)) throw new IllegalArgumentException(key + INVALID_SUFFIX);
         String value = (String) raw;
         if (value.trim().isEmpty() || value.length() > max)
-            throw new IllegalArgumentException(key + " invalid");
+            throw new IllegalArgumentException(key + INVALID_SUFFIX);
         return value;
     }
 
-    private static boolean deny(HttpServletResponse response, int status, String code) {
+    private boolean deny(HttpServletResponse response, int status, String code) {
         response.setStatus(status);
         response.setContentType("application/json;charset=UTF-8");
         response.setHeader(HttpHeaders.CACHE_CONTROL, "no-store");
         try {
-            response.getWriter().write("{\"error\":\"" + code + "\"}");
-        } catch (IOException ignored) {}
+            response.getWriter().write(json.writeValueAsString(ResultMsg.fail(code)));
+        } catch (IOException ignored) {
+            // A closed response cannot be written; the request remains denied.
+        }
         return false;
     }
 

@@ -23,6 +23,10 @@ import java.util.Map;
 @Controller
 @RequestMapping(value = {"llm", "union-op/llm"})
 public class ScheduledTaskController {
+    private static final String USER_ID = "userId";
+    private static final String TASK_ID = "taskId";
+    private static final String RUN_ID = "runId";
+
 
     @Autowired
     private ScheduledTaskService scheduledTaskService;
@@ -51,7 +55,7 @@ public class ScheduledTaskController {
         return response(scheduledTaskService.list(json.createObjectNode()
                 .put("keyword", query.getKeyword()).put("status", query.getStatus())
                 .put("page", page(query.getPage())).put("pageSize", pageSize(query.getPageSize()))
-                .put("userId", AuthContextHolder.getAuthUserDetails().getLoginName()).toString()));
+                .put(USER_ID, AuthContextHolder.getAuthUserDetails().getLoginName()).toString()));
     }
 
     @RequestMapping(value = "/scheduledTaskDetail", method = RequestMethod.GET)
@@ -59,19 +63,19 @@ public class ScheduledTaskController {
     @ResponseBody
     public ResultMsg detail(@RequestParam Long taskId) {
         return response(scheduledTaskService.detail(json.createObjectNode()
-                .put("taskId", positive(taskId, "taskId"))
-                .put("userId", AuthContextHolder.getAuthUserDetails().getLoginName()).toString()));
+                .put(TASK_ID, positive(taskId, TASK_ID))
+                .put(USER_ID, AuthContextHolder.getAuthUserDetails().getLoginName()).toString()));
     }
 
     @RequestMapping(value = "/scheduledTaskRunList", method = {RequestMethod.GET, RequestMethod.POST})
     @RequiresPermissions(value = "/assistantManager/page")
     @ResponseBody
     public ResultMsg runList(ScheduledTaskQueryVO query) {
-        query.setTaskId(positive(query.getTaskId(), "taskId"));
+        query.setTaskId(positive(query.getTaskId(), TASK_ID));
         return response(scheduledTaskService.runs(json.createObjectNode()
-                .put("taskId", query.getTaskId()).put("page", page(query.getPage()))
+                .put(TASK_ID, query.getTaskId()).put("page", page(query.getPage()))
                 .put("pageSize", pageSize(query.getPageSize()))
-                .put("userId", AuthContextHolder.getAuthUserDetails().getLoginName()).toString()));
+                .put(USER_ID, AuthContextHolder.getAuthUserDetails().getLoginName()).toString()));
     }
 
     @RequestMapping(value = "/scheduledTaskRunDetail", method = RequestMethod.GET)
@@ -79,8 +83,8 @@ public class ScheduledTaskController {
     @ResponseBody
     public ResultMsg runDetail(@RequestParam Long runId) {
         return response(scheduledTaskService.runDetail(json.createObjectNode()
-                .put("runId", positive(runId, "runId"))
-                .put("userId", AuthContextHolder.getAuthUserDetails().getLoginName()).toString()));
+                .put(RUN_ID, positive(runId, RUN_ID))
+                .put(USER_ID, AuthContextHolder.getAuthUserDetails().getLoginName()).toString()));
     }
 
     @RequestMapping(value = "/scheduledTaskUnread", method = RequestMethod.GET)
@@ -88,7 +92,7 @@ public class ScheduledTaskController {
     @ResponseBody
     public ResultMsg unread() {
         return response(scheduledTaskService.unread(json.createObjectNode()
-                .put("userId", AuthContextHolder.getAuthUserDetails().getLoginName()).toString()));
+                .put(USER_ID, AuthContextHolder.getAuthUserDetails().getLoginName()).toString()));
     }
 
     @RequestMapping(value = "/scheduledTaskStart", method = RequestMethod.POST)
@@ -96,8 +100,8 @@ public class ScheduledTaskController {
     @ResponseBody
     public ResultMsg start(@RequestBody IdCommand command) {
         return response(scheduledTaskService.start(json.createObjectNode()
-                .put("taskId", positive(command.getTaskId(), "taskId"))
-                .put("userId", AuthContextHolder.getAuthUserDetails().getLoginName()).toString()));
+                .put(TASK_ID, positive(command.getTaskId(), TASK_ID))
+                .put(USER_ID, AuthContextHolder.getAuthUserDetails().getLoginName()).toString()));
     }
 
     @RequestMapping(value = "/scheduledTaskPause", method = RequestMethod.POST)
@@ -105,8 +109,8 @@ public class ScheduledTaskController {
     @ResponseBody
     public ResultMsg pause(@RequestBody IdCommand command) {
         return response(scheduledTaskService.pause(json.createObjectNode()
-                .put("taskId", positive(command.getTaskId(), "taskId"))
-                .put("userId", AuthContextHolder.getAuthUserDetails().getLoginName()).toString()));
+                .put(TASK_ID, positive(command.getTaskId(), TASK_ID))
+                .put(USER_ID, AuthContextHolder.getAuthUserDetails().getLoginName()).toString()));
     }
 
     @RequestMapping(value = "/scheduledTaskDiscard", method = RequestMethod.POST)
@@ -114,8 +118,8 @@ public class ScheduledTaskController {
     @ResponseBody
     public ResultMsg discard(@RequestBody IdCommand command) {
         return response(scheduledTaskService.discard(json.createObjectNode()
-                .put("taskId", positive(command.getTaskId(), "taskId"))
-                .put("userId", AuthContextHolder.getAuthUserDetails().getLoginName()).toString()));
+                .put(TASK_ID, positive(command.getTaskId(), TASK_ID))
+                .put(USER_ID, AuthContextHolder.getAuthUserDetails().getLoginName()).toString()));
     }
 
     @RequestMapping(value = "/scheduledTaskRunOpen", method = RequestMethod.POST)
@@ -123,8 +127,8 @@ public class ScheduledTaskController {
     @ResponseBody
     public ResultMsg open(@RequestBody IdCommand command) {
         return response(scheduledTaskService.open(json.createObjectNode()
-                .put("runId", positive(command.getRunId(), "runId"))
-                .put("userId", AuthContextHolder.getAuthUserDetails().getLoginName()).toString()));
+                .put(RUN_ID, positive(command.getRunId(), RUN_ID))
+                .put(USER_ID, AuthContextHolder.getAuthUserDetails().getLoginName()).toString()));
     }
 
     private static Long positive(Long value, String name) {
@@ -140,7 +144,7 @@ public class ScheduledTaskController {
     private static Map<String, Object> command(ScheduledTaskCommandVO value) {
         if (value == null) throw new IllegalArgumentException("请求参数非法");
         Map<String, Object> command = new LinkedHashMap<>();
-        command.put("taskId", value.getTaskId());
+        command.put(TASK_ID, value.getTaskId());
         command.put("title", value.getTitle());
         command.put("prompt", value.getPrompt());
         command.put("scheduleType", value.getScheduleType());
@@ -150,7 +154,7 @@ public class ScheduledTaskController {
         command.put("timezone", value.getTimezone());
         command.put("permissions", Collections.singletonList("/assistantManager/page"));
         ShiroUser user = AuthContextHolder.getAuthUserDetails();
-        command.put("userId", user.getLoginName());
+        command.put(USER_ID, user.getLoginName());
         command.put("orgCode", user.getOrgCode());
         command.put("roleId", user.getRoleId());
         return command;
